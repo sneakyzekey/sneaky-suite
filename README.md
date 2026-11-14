@@ -24,7 +24,10 @@ a NinjaTrader 8 chart.
 | **SneakyLiquiditySfpMss** — liquidity map panel<br>![SneakyLiquiditySfpMss](screenshots/SneakyLiquiditySfpMss.png) | **SneakyAlphaForgeFlow**<br>![SneakyAlphaForgeFlow](screenshots/SneakyAlphaForgeFlow.png) |
 | **SneakyVolumeImbalancePro**<br>![SneakyVolumeImbalancePro](screenshots/SneakyVolumeImbalancePro.png) | **SneakyVolumeProfilePro**<br>![SneakyVolumeProfilePro](screenshots/SneakyVolumeProfilePro.png) |
 | **SneakyFusion17** — God Mode X Fusion17 panel<br>![SneakyFusion17](screenshots/SneakyFusion17.png) | **SneakyCRT** — Candle Range Theory scanner<br>![SneakyCRT](screenshots/SneakyCRT.png) |
-| **SneakyDashBridge** — local trading dashboard<br>![SneakyDashBridge local dashboard](screenshots/SneakyDashBridge_LocalDashboard.png) | |
+| **SneakyDashBridge** — local trading dashboard<br>![SneakyDashBridge local dashboard](screenshots/SneakyDashBridge_LocalDashboard.png) | **SneakyAOBLE** — order blocks / liquidity sweeps<br>![SneakyAOBLE](screenshots/SneakyAOBLE.png) |
+| **SneakyAOBLE panel** (with HUD)<br>![SneakyAOBLE panel](screenshots/SneakyAOBLE_panel.png) | **SneakyKineticPanel + SneakyGexRadar**<br>![SneakyKineticPanel + GexRadar](screenshots/SneakyKineticPanel_GexRadar.png) |
+| **SneakyCRTAlpha** — CRT dashboard<br>![SneakyCRTAlpha](screenshots/SneakyCRTAlpha.png) | **SneakyGexRadarStrategy**<br>![SneakyGexRadarStrategy](screenshots/SneakyGexRadarStrategy.png) |
+| **SneakyTradeHUD** — order management panel<br>![SneakyTradeHUD order panel](screenshots/SneakyTradeHUD_OrderPanel.png) | |
 
 ## Contents
 
