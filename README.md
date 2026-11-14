@@ -27,7 +27,22 @@ a NinjaTrader 8 chart.
 | **SneakyDashBridge** — local trading dashboard<br>![SneakyDashBridge local dashboard](screenshots/SneakyDashBridge_LocalDashboard.png) | **SneakyAOBLE** — order blocks / liquidity sweeps<br>![SneakyAOBLE](screenshots/SneakyAOBLE.png) |
 | **SneakyAOBLE panel** (with HUD)<br>![SneakyAOBLE panel](screenshots/SneakyAOBLE_panel.png) | **SneakyKineticPanel + SneakyGexRadar**<br>![SneakyKineticPanel + GexRadar](screenshots/SneakyKineticPanel_GexRadar.png) |
 | **SneakyCRTAlpha** — CRT dashboard<br>![SneakyCRTAlpha](screenshots/SneakyCRTAlpha.png) | **SneakyGexRadarStrategy**<br>![SneakyGexRadarStrategy](screenshots/SneakyGexRadarStrategy.png) |
-| **SneakyTradeHUD** — order management panel<br>![SneakyTradeHUD order panel](screenshots/SneakyTradeHUD_OrderPanel.png) | |
+| **SneakyTradeHUD** — order management panel<br>![SneakyTradeHUD order panel](screenshots/SneakyTradeHUD_OrderPanel.png) | **PredatorBollinger** — Bollinger strategy (Predator host)<br>![PredatorBollinger](screenshots/PredatorBollinger.png) |
+| **SneakyIctMarketStructure** (2nd view)<br>![SneakyIctMarketStructure 2](screenshots/SneakyIctMarketStructure_2.png) | **SneakyLiquiditySfpMss** (2nd view, GBPUSD)<br>![SneakyLiquiditySfpMss 2](screenshots/SneakyLiquiditySfpMss_2.png) |
+| **SneakyKineticPanel + GexRadar** (2nd view, scalper mode)<br>![Kinetic Panel + GexRadar 2](screenshots/SneakyKineticPanel_GexRadar_2.png) | **SneakyXLBreakoutScanner** — breakout/signal scanner panel<br>![SneakyXLBreakoutScanner](screenshots/SneakyXLBreakoutScanner.png) |
+| **SneakyIntermarket** — cross-symbol strength table<br>![SneakyIntermarket table](screenshots/SneakyIntermarket_table.png) | **SneakyLevelsPanel** — session/VWAP levels<br>![SneakyLevelsPanel](screenshots/SneakyLevelsPanel.png) |
+
+### Original sources (open-source scripts ported to NT8 for the files above)
+
+These are the original charts of the open-source indicators that several Sneaky files are ported from, included here for reference/attribution alongside their NT8 ports above:
+
+| | |
+|---|---|
+| **"ICT Market Structure Screener" (Zeiierman)** — original source for `SneakyIctMarketStructure.cs`<br>![Zeiierman ICT Market Structure original](screenshots/Zeiierman_IctMarketStructure_original.png) | **"Buyers & Sellers Profile + Dynamic S/R" (Zeiierman)** — original source for `SneakyBuyersSellersProfile.cs`<br>![Zeiierman Buyers Sellers Profile original](screenshots/Zeiierman_BuyersSellersProfile_original.png) |
+| **"RSI Strength & Consolidation Zones" (Zeiierman)** — original source for `SneakyRsiStrengthZones.cs`<br>![Zeiierman RSI Strength Zones original](screenshots/Zeiierman_RsiStrengthZones_original.png) | **"SuperTrend Cluster" (Zeiierman)** — original source for `SneakySuperTrendCluster.cs`<br>![Zeiierman SuperTrend Cluster original](screenshots/Zeiierman_SuperTrendCluster_original.png) |
+| **"Levels Likely to Break" (Zeiierman)** — original source for `SneakyLevelsLikelyToBreak.cs`<br>![Zeiierman Levels Likely to Break original](screenshots/Zeiierman_LevelsLikelyToBreak_original.png) | **"Unicorn" (LuxFX)** — original source for `SneakyIctUnicorn.cs`<br>![LuxFX Unicorn original](screenshots/LuxFX_Unicorn_original.png) |
+| **"AF Aurora" / Alpha Forge** — original source for `SneakyAlphaForgeFlow.cs`<br>![AF Aurora Alpha Forge original](screenshots/AlphaForge_AFAurora_original.png) | **"Buy/Sell Signals XL"** — original source related to the XL breakout/signal scanner panel above<br>![Buy Sell Signals XL original](screenshots/BuySellSignalsXL_original.png) |
+| **CRT concept reference chart (crypto, non-NT8)**<br>![CRT AAVE original](screenshots/CRT_AAVE_original.png) | **AOBLE concept reference chart (XAUUSD, non-NT8)**<br>![AOBLE XAUUSD original](screenshots/AOBLE_XAUUSD_original.png) |
 
 ## Contents
 
