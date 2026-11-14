@@ -49,12 +49,18 @@ These are the original charts of the open-source indicators that several Sneaky 
 - **`Indicators/`** — 124 chart indicators
 - **`Strategies/`** — 20 automated strategies
 - **`AddOns/`** — 21 NinjaTrader AddOn services (risk/logging/alerts/dashboard/HUD infrastructure)
+- **`GradingToolkit/`** — Python scripts for grading/validating Council &
+  Confluence against recorded data
 
 For a full description plus the entry/signal/trigger logic of every single
 file below, see **[REFERENCE.md](REFERENCE.md)**. The tables here are a
 quick-scan summary; REFERENCE.md has the real detail (e.g. exactly what
 fires a signal, what each strategy's entry/exit rule is, which add-ons
 actually gate or trigger trades vs. which are pure logging/UI).
+
+Setting up Council/Confluence's full recording + grading pipeline (Recorder,
+Instance Tags, and the Python toolkit)? See
+**[SETUP_GRADING.md](SETUP_GRADING.md)**.
 
 ### Indicators
 
