@@ -37,6 +37,7 @@ namespace NinjaTrader.NinjaScript.Strategies
     public enum GexProfileScopeS { Near, All }
     public enum PinSourceS { Auto, ProfileMagnet, CsvPinStrike, Manual }
     public enum WingPresetS { Min15, Std40, Wide70, Max95 }
+    public enum TradeSideS { Both, LongOnly, ShortOnly }
 
     public class SneakyGexRadarStrategy : Strategy
     {
@@ -61,6 +62,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         private StreamWriter rec;
         private double netGex = 0; private bool netGexKnown = false; private Dictionary<int, int> lastGexBar = new Dictionary<int, int>();
         private int lastSignalBarLong = -1000, lastSignalBarShort = -1000, lastFvgBarLong = -1000, lastFvgBarShort = -1000;
+        // "Require break of signal bar" bookkeeping: a setup that's waiting for a later bar to break its own signal bar's high/low
+        private Setup pendingSetup; private int pendingDir, pendingSignalBar; private double pendingSignalHigh, pendingSignalLow;
 
         // ------------------------------------------------------------------ properties
         // ------------------------------------------------------------------ properties
@@ -214,6 +217,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Min score to trade", GroupName = "0 Trading", Order = 7, Description = "Applied on top of the setup's own score rules. 0 = trade every setup shown.")]
         [Range(0, 100)]
         public int MinTradeScore { get; set; }
+        [Display(Name = "Trade side", GroupName = "0 Trading", Order = 8, Description = "Both (default): take every qualifying setup, long or short. Long only / Short only: ignore setups in the other direction entirely (they're still drawn/scored, just never traded).")]
+        public TradeSideS TradeSide { get; set; }
+
+        [Display(Name = "Require break of signal bar", GroupName = "2b Entry filters", Order = 0, Description = "OFF (default): enter right on the setup's own signal bar, as before. ON: instead of entering immediately, hold the setup and wait - only enter once a LATER bar's high (for a long) / low (for a short) trades beyond the signal bar's own high/low, i.e. price actually follows through past where the setup printed. The setup is dropped (no trade) if the break hasn't happened within 'Max bars to resolve' bars (Plan group).")]
+        public bool RequireBreakOfSignalBar { get; set; }
+        [Display(Name = "Require N consecutive same-color bars", GroupName = "2b Entry filters", Order = 1, Description = "OFF (default): no bar-color requirement on the entry bar. ON: the bar an entry is about to trigger on, plus the N-1 bars immediately before it, must all be the same color as the trade direction - up-closed bars (Close > Open) for a long, down-closed bars (Close < Open) for a short (e.g. N=2 needs 'up bar after up bar' for a long). A doji (Close == Open) breaks the run and blocks that entry. Works standalone or combined with the break-of-signal-bar filter above (checked on whichever bar the entry would otherwise fire on).")]
+        public bool RequireConsecutiveBars { get; set; }
+        [Range(1, 20)]
+        [Display(Name = "Consecutive bars needed", GroupName = "2b Entry filters", Order = 2)]
+        public int ConsecutiveBarsCount { get; set; }
 
         // ------------------------------------------------------------------ 9 Panels & history
         [Display(Name = "Draw setups on history (no trading)", GroupName = "9 Panels & history", Order = 0, Description = "Scans old bars against TODAY's levels so zones, B/W/X/P/C/F marks and plan lines show on the existing chart. Draw-only: history bars are never traded. Look-ahead, for eyeballing only; results are not logged.")]
@@ -284,7 +297,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 BarsRequiredToTrade = 60;
                 IsInstantiatedOnEachOptimizationIteration = true;
 
-                Quantity = 1; TradeHistorical = false; MaxTradesPerDay = 0; DailyLossLimit = 0; MinTradeScore = 0;
+                Quantity = 1; TradeHistorical = false; MaxTradesPerDay = 0; DailyLossLimit = 0; MinTradeScore = 0; TradeSide = TradeSideS.Both;
+                RequireBreakOfSignalBar = false; RequireConsecutiveBars = false; ConsecutiveBarsCount = 2;
                 UseSession = false; SessionStart = 930; SessionEnd = 1600;
                 ScanHistory = true; ShowKinetic = true; ShowPinPayoff = true; ShowGexProfile = true; StripHeight = 230; HideStripsOnDrag = true; ShowPerf = true;
                 KinCorner = RadarStratCorner.TopRight; KinOffsetX = 70; KinOffsetY = 40; KinScale = 1.0;
@@ -524,16 +538,42 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (setups.Count > 200) setups.RemoveRange(0, setups.Count - 200);
                 if (marks.Count > 400) marks.RemoveRange(0, marks.Count - 400);
             }
-            if (best == null || !canTrade) return;
+            if (!canTrade) return;
 
             // ---------------- entry
             if (inPos)
             {
-                bool opposite = (Position.MarketPosition == MarketPosition.Long && best.Dir < 0) || (Position.MarketPosition == MarketPosition.Short && best.Dir > 0);
-                if (ExitOnOpposite && opposite) CloseAll("OppositeSetup");
+                if (best != null)
+                {
+                    bool opposite = (Position.MarketPosition == MarketPosition.Long && best.Dir < 0) || (Position.MarketPosition == MarketPosition.Short && best.Dir > 0);
+                    if (ExitOnOpposite && opposite) CloseAll("OppositeSetup");
+                }
+                pendingSetup = null;   // a position is open: any earlier pending breakout wait is moot
                 return;   // one position at a time
             }
+
+            // "Require break of signal bar": a setup that's waiting for a LATER bar to break its own signal bar's high/low.
+            // Checked every bar it stays alive, even bars with no fresh setup of their own.
+            if (pendingSetup != null)
+            {
+                if (CurrentBar - pendingSignalBar > MaxAgeBars) pendingSetup = null;
+                else
+                {
+                    bool brokeOut = pendingDir > 0 ? High[0] > pendingSignalHigh : Low[0] < pendingSignalLow;
+                    if (brokeOut)
+                    {
+                        Setup toEnter = pendingSetup; int pDir = pendingDir;
+                        pendingSetup = null;   // one shot: this pending setup is resolved either way
+                        if (!RequireConsecutiveBars || ConsecutiveBarsOk(pDir)) PlaceEntry(toEnter, pDir, atr);
+                    }
+                }
+            }
+            if (Position.MarketPosition != MarketPosition.Flat || lastEntryBar == CurrentBar) return;   // the pending check above may have just filled this bar
+
+            if (best == null) return;
             int dir = best.Dir;
+            if (TradeSide == TradeSideS.LongOnly && dir < 0) return;
+            if (TradeSide == TradeSideS.ShortOnly && dir > 0) return;
             if (best.Score < MinTradeScore) return;
             if (MaxTradesPerDay > 0 && tradesToday >= MaxTradesPerDay) return;
             if (DailyLossLimit > 0 && TodayPnl() <= -DailyLossLimit) return;
@@ -544,6 +584,33 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (!inside) return;
             }
             if (lastEntryBar == CurrentBar) return;
+
+            if (RequireBreakOfSignalBar)
+            {
+                // hold the setup; only place the order once a later bar actually breaks this signal bar's high/low (see above)
+                pendingSetup = best; pendingDir = dir; pendingSignalHigh = High[0]; pendingSignalLow = Low[0]; pendingSignalBar = CurrentBar;
+                return;
+            }
+            if (RequireConsecutiveBars && !ConsecutiveBarsOk(dir)) return;
+            PlaceEntry(best, dir, atr);
+        }
+
+        // true when the current bar, plus the (ConsecutiveBarsCount - 1) bars immediately before it, are all the same
+        // color as the trade direction: Close > Open ("up bar") for a long, Close < Open ("down bar") for a short.
+        private bool ConsecutiveBarsOk(int dir)
+        {
+            int n = ConsecutiveBarsCount;
+            if (CurrentBar < n - 1) return false;
+            for (int i = 0; i < n; i++)
+            {
+                if (dir > 0) { if (!(Close[i] > Open[i])) return false; }
+                else { if (!(Close[i] < Open[i])) return false; }
+            }
+            return true;
+        }
+
+        private void PlaceEntry(Setup best, int dir, double atr)
+        {
             // a protective stop / target must sit on the correct side of the market or NinjaTrader rejects the order
             double edge = 2 * TickSize;
             if (dir > 0 && !(best.Stop < Close[0] - edge && best.Target > Close[0] + edge)) return;
