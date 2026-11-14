@@ -22,6 +22,34 @@ without the copyright holder's prior written consent. This prohibition
 applies regardless of whether the work is distributed for free alongside
 the commercial offering.
 
+NOTICE ON PORTED / FORKED FILES
+
+Not every file in this repository is wholly original work. Some files are
+ports, forks, or adaptations of other authors' publicly available scripts
+or open-source projects, carried over and modified for use in this suite.
+Known examples include:
+
+  - SneakyKeel_v0_1_0.cs -- derived from the "Sentinel Suite" project,
+    originally licensed under the Mozilla Public License 2.0, Copyright (c)
+    2026 silentsudo-io and the Sentinel Suite contributors. That file
+    remains subject to the terms of the MPL 2.0 (see
+    https://mozilla.org/MPL/2.0/) to the extent it incorporates that
+    original source; the all-rights-reserved terms above apply only to this
+    repository's own modifications and additions to it.
+  - SneakyIctMarketStructure.cs -- adapted from a TradingView Pine Script
+    indicator, "ICT Market Structure Screener," by the TradingView author
+    Zeiierman.
+
+Other files in this repository may likewise incorporate logic ported or
+adapted from third-party public scripts that have not yet been individually
+identified and credited here. The copyright and all-rights-reserved claims
+in this LICENSE apply to this repository's own code, modifications, and
+original additions; they do not claim ownership of, or override the
+license terms attached to, any underlying third-party work a file may be
+derived from. If you are a credited author of a script this suite ports or
+adapts and believe attribution here is missing or incorrect, contact the
+repository owner so it can be corrected.
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
