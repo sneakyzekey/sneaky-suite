@@ -280,7 +280,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Border root;
         private StackPanel body;
         private TextBlock lblPos, lblOpen, lblDetail, lblSession, lblOrders, lblStatus;
-        private Button btnAcct, btnCollapse, btnAutoBE, btnAutoTrail;
+        private Button btnAcct, btnCollapse, btnAutoBE, btnAutoTrail, btnDock;
         private DispatcherTimer uiTimer;
         private bool dragging, collapsed;
         private Point dragStart;
@@ -1709,15 +1709,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                 head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 TextBlock title = Lbl(12, FgMain, FontWeights.Bold); title.Text = "SNEAKY HUD  " + Instrument.MasterInstrument.Name;
                 title.VerticalAlignment = VerticalAlignment.Center;
                 Grid.SetColumn(title, 0); head.Children.Add(title);
+                btnDock = MkBtn("⧉", "Dock in Chart Trader / float on the chart. Click to switch (rebuilds the panel). Same as the 'Dock in Chart Trader' setting in the indicator's properties.", delegate { ToggleDock(); }, 26);
+                Grid.SetColumn(btnDock, 1); head.Children.Add(btnDock);
                 btnSize = MkBtn("100%", "Shrink / grow the whole panel. Shift-click to go the other direction. (Setting: HUD size)", delegate { CycleSize(1); }, 0);
-                Grid.SetColumn(btnSize, 1); head.Children.Add(btnSize);
+                Grid.SetColumn(btnSize, 2); head.Children.Add(btnSize);
                 btnAcct = MkBtn("Acct: AUTO", "Click to cycle account: AUTO / each connected account", delegate { CycleAccount(); }, 0);
-                Grid.SetColumn(btnAcct, 2); head.Children.Add(btnAcct);
+                Grid.SetColumn(btnAcct, 3); head.Children.Add(btnAcct);
                 btnCollapse = MkBtn("–", "Collapse / expand", delegate { ToggleCollapse(); }, 26);
-                Grid.SetColumn(btnCollapse, 3); head.Children.Add(btnCollapse);
+                Grid.SetColumn(btnCollapse, 4); head.Children.Add(btnCollapse);
                 head.MouseLeftButtonDown += OnDragDown;
                 head.MouseMove += OnDragMove;
                 head.MouseLeftButtonUp += OnDragUp;
@@ -1899,6 +1902,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                     UserControlCollection.Add(root);
                     if (DockInChartTrader) SetStatus("Dock in Chart Trader: not found on this chart, floating on chart instead.");
                 }
+                if (btnDock != null)
+                {
+                    btnDock.Content = dockedInChartTrader ? "⧉" : "⤢";
+                    btnDock.ToolTip = (dockedInChartTrader ? "Docked in Chart Trader. " : "Floating on chart. ") + "Click to switch to " + (dockedInChartTrader ? "floating on the chart" : "docking in Chart Trader") + " (rebuilds the panel). Same as the 'Dock in Chart Trader' setting in the indicator's properties.";
+                }
 
                 uiTimer = new DispatcherTimer();
                 uiTimer.Interval = TimeSpan.FromMilliseconds(300);
@@ -1948,6 +1956,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             collapsed = !collapsed;
             bodyScroll.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             btnCollapse.Content = collapsed ? "+" : "–";
+        }
+        // on-chart equivalent of the "Dock in Chart Trader" property: flips it and rebuilds the panel
+        // so it actually re-docks (or floats back onto the chart) right away, no recompile needed.
+        private void ToggleDock()
+        {
+            try
+            {
+                DockInChartTrader = !DockInChartTrader;
+                TearDownUi();
+                BuildUi();
+            }
+            catch (Exception ex) { try { Print("[SneakyTradeHUD] ToggleDock: " + ex.Message); } catch { } }
         }
 
         private void ApplyScale()
