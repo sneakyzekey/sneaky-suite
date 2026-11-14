@@ -39,6 +39,12 @@ Known examples include:
   - SneakyIctMarketStructure.cs -- adapted from a TradingView Pine Script
     indicator, "ICT Market Structure Screener," by the TradingView author
     Zeiierman.
+  - SneakyBuyersSellersProfile.cs -- adapted from the TradingView Pine
+    Script indicator "Buyers & Sellers Profile + Dynamic S/R," by Zeiierman.
+  - SneakyRsiStrengthZones.cs -- adapted from the TradingView Pine Script
+    indicator "RSI Strength & Consolidation Zones," by Zeiierman.
+  - SneakySuperTrendCluster.cs -- adapted from the TradingView Pine Script
+    indicator "SuperTrend Cluster," by Zeiierman.
 
 Other files in this repository may likewise incorporate logic ported or
 adapted from third-party public scripts that have not yet been individually

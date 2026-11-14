@@ -8,6 +8,19 @@ market-structure and liquidity tools, automated strategies, and the add-on
 services (risk, logging, alerts, dashboards, HUDs) that tie them together on
 a NinjaTrader 8 chart.
 
+## Screenshots
+
+| | |
+|---|---|
+| **SneakyTradeHUD** — on-chart AUTO TRADE HUD<br>![SneakyTradeHUD](screenshots/SneakyTradeHUD.png) | **SneakyTradeHUD + SuperTrend Cluster**<br>![SneakyTradeHUD + SuperTrendCluster](screenshots/SneakyTradeHUD_SuperTrendCluster.png) |
+| **SneakyTradeHUD + RSI Strength Zones**<br>![SneakyTradeHUD + RsiStrengthZones](screenshots/SneakyTradeHUD_RsiStrengthZones.png) | **GexLevels** — gamma/GEX levels panel<br>![GexLevels](screenshots/GexLevels.png) |
+| **SneakyADXPro + Council** — ADX panel + Council vote panel<br>![SneakyADXPro + Council](screenshots/SneakyADXPro_Council.png) | **SneakyMarketStructure** — BMS/CHoCH structure table<br>![SneakyMarketStructure](screenshots/SneakyMarketStructure.png) |
+| **SneakyInsaneToOsc** — oscillator<br>![SneakyInsaneToOsc](screenshots/SneakyInsaneToOsc.png) | **SneakyRegimeSwitch** — regime-aware strategy<br>![SneakyRegimeSwitch](screenshots/SneakyRegimeSwitch.png) |
+| **SneakyWix9ineRanges**<br>![SneakyWix9ineRanges](screenshots/SneakyWix9ineRanges.png) | **SneakyEquityGate** — SIM-to-LIVE controller<br>![SneakyEquityGate](screenshots/SneakyEquityGate.png) |
+| **LinRegUTBotReversal + Sneaky Order Flow Dashboard**<br>![LinRegUTBotReversal + OrderFlowDashboard](screenshots/LinRegUTBotReversal_OrderFlowDashboard.png) | **PraedoxSentinel + TradeProtector**<br>![PraedoxSentinel + TradeProtector](screenshots/PraedoxSentinel_TradeProtector.png) |
+| **GodTradesStrategy**<br>![GodTradesStrategy](screenshots/GodTradesStrategy.png) | **TurtleTrendBreakout**<br>![TurtleTrendBreakout](screenshots/TurtleTrendBreakout.png) |
+| **TONebula RealFlow**<br>![TONebula RealFlow](screenshots/TONebula_RealFlow.png) | |
+
 ## Contents
 
 - **`Indicators/`** — 124 chart indicators
