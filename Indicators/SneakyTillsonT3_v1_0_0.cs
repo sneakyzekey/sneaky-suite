@@ -1,0 +1,277 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// This Source Code Form is subject to the terms of the Mozilla Public License,
+// v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain
+// one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 silentsudo-io and the Sentinel Suite contributors.
+// ─────────────────────────────────────────────────────────────────────────────
+#region Using declarations
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Windows.Media;
+using System.Xml.Serialization;
+using NinjaTrader.Cbi;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.Data;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
+using NinjaTrader.NinjaScript.AddOns.Sneaky;             // SneakySkin (glass card) + SneakyCardCorner
+using NinjaTrader.NinjaScript.Indicators.Sneaky.Smoothers; // own namespace (bare-enum codegen resolves here)
+#endregion
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Sneaky Tillson T3 — 6-pole T3 smoother (Sneaky smoother building block)   |   Version v1.0.0
+//  File: SneakyTillsonT3_v1_0_0.cs  |  namespace …Indicators.Sneaky.Smoothers  |  display "Sneaky TillsonT3"
+//
+//  ⚠ NO ORDERS · NO STATE SEAM — a read-only SMOOTHER building block, not a Council voter. It draws a
+//  smoothed line + a Sneaky glass card; it publishes nothing (a moving average has no verdict). A baseline
+//  the signal tools can consume, and a Sneaky-branded T3 in its own right.
+//
+//  PROVENANCE / LICENSE: CLEAN-ROOM. The algorithm (Tim Tillson's T3 — a 6-pole cascade of exponential
+//  moving averages combined with a volume-factor weighting) was IDENTIFIED from a GPL-3.0 LizardIndicators
+//  source (amaTillsonT3.cs), but NO GPL code was used — this is reimplemented FRESH from the canonical public
+//  formula (Tillson, "Smoothing Techniques for More Accurate Signals", TASC Jan 1998), a mathematical method
+//  which is not copyrightable. No third-party code, variable names, or structure were copied.
+//
+//  ASSUMPTIONS: implements the standard "Tillson" mode (all six EMAs use lookback = Period; α = 2/(Period+1)).
+//  The source's optional "Fulks-Matulich" period-rescale mode + its CalcMode enum are intentionally omitted
+//  (Sneaky prefers plain params over new enums). Early bars are seeded from the input value.
+//
+//  NOTE: mathematically near-identical to SneakyCoralFilter (both are the canonical T3 6-EMA cascade — see
+//  that file's header). Kept as two indicators to match main 1:1 (different defaults/branding: T3 Period 14/
+//  VFactor 0.7 vs Coral Period 34/d 0.4).
+//
+//  CHANGELOG
+//    v1.0.0 (2026-08-17) — ported from main (identical to main's 2026-07-12 clean-room build, math
+//             unchanged), mapped to Sneaky naming/namespace and re-plumbed onto live's SCROLL card
+//             convention (ISneakyScrollCard / EnsureScrollHook / PlaceScroll / ConductorRender) instead of
+//             main's older SneakySkin.CardLayout.Place. Standalone, purely-additive port — not referenced
+//             by any other Sneaky file.
+// ═════════════════════════════════════════════════════════════════════════════
+namespace NinjaTrader.NinjaScript.Indicators.Sneaky.Smoothers
+{
+    public class SneakyTillsonT3_v1_0_0 : Indicator, ISneakyScrollCard
+    {
+        private SneakySkin.Painter _sp;
+        // cached for the card (data thread) — OnRender must never touch Value[]
+        private double _cardVal;
+        private int    _cardSlope;
+        private bool   _cardHasData;
+
+        private Series<double> e1, e2, e3, e4, e5, e6;
+        private double alpha, c1, c2, c3, c4;
+
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Description              = "Sneaky smoother library — Tillson T3 (clean-room). A 6-pole smoother: six cascaded EMAs combined via a volume-factor weighting → a low-lag, low-noise moving average + a Sneaky glass card. A building block, not a Council voter (no State seam).";
+                Name                     = "Sneaky TillsonT3 v1.0.0";
+                Calculate                = Calculate.OnPriceChange;
+                IsOverlay                = true;
+                IsSuspendedWhileInactive = true;
+                DrawOnPricePanel         = true;
+
+                Period                   = 14;
+                VFactor                  = 0.7;
+
+                ShowCard           = true;
+                CardCorner         = SneakyCardCorner.TopRight;
+                ShowIndicatorLabel = false;
+
+                AddPlot(new Stroke(Brushes.MediumBlue, 2), PlotStyle.Line, "TillsonT3");
+            }
+            else if (State == State.Configure)
+            {
+                e1 = new Series<double>(this);
+                e2 = new Series<double>(this);
+                e3 = new Series<double>(this);
+                e4 = new Series<double>(this);
+                e5 = new Series<double>(this);
+                e6 = new Series<double>(this);
+
+                alpha = 2.0 / (Period + 1.0);
+
+                double b = VFactor, b2 = b * b, b3 = b2 * b;
+                c1 = -b3;
+                c2 = 3.0 * b2 + 3.0 * b3;
+                c3 = -6.0 * b2 - 3.0 * b - 3.0 * b3;
+                c4 = 1.0 + 3.0 * b + b3 + 3.0 * b2;
+            }
+            else if (State == State.DataLoaded)
+            {
+                if (!ShowIndicatorLabel) Name = string.Empty;   // Sneaky label remover
+            }
+            else if (State == State.Terminated)
+            {
+                if (_sp != null) { try { _sp.Dispose(); } catch (Exception _sx) { SneakyCore.Swallow("SneakyTillsonT3.OnStateChange", _sx); } _sp = null; }
+                try { SneakySkin.CardLayout.Release(this); } catch (Exception _sx) { SneakyCore.Swallow("SneakyTillsonT3.OnStateChange", _sx); }
+            }
+        }
+
+        protected override void OnBarUpdate()
+        {
+            // Clean-room Tillson T3: six cascaded EMAs (α = 2/(Period+1)), then a volume-factor combination.
+            if (CurrentBar == 0)
+            {
+                double x0 = Input[0];
+                e1[0] = e2[0] = e3[0] = e4[0] = e5[0] = e6[0] = x0;
+                Value[0] = c1 * e6[0] + c2 * e5[0] + c3 * e4[0] + c4 * e3[0];
+                return;
+            }
+
+            e1[0] = e1[1] + alpha * (Input[0] - e1[1]);
+            e2[0] = e2[1] + alpha * (e1[0]   - e2[1]);
+            e3[0] = e3[1] + alpha * (e2[0]   - e3[1]);
+            e4[0] = e4[1] + alpha * (e3[0]   - e4[1]);
+            e5[0] = e5[1] + alpha * (e4[0]   - e5[1]);
+            e6[0] = e6[1] + alpha * (e5[0]   - e6[1]);
+
+            Value[0] = c1 * e6[0] + c2 * e5[0] + c3 * e4[0] + c4 * e3[0];
+            // cache the card readout here (data thread), so OnRender never touches Value[]
+            _cardVal    = Value[0];
+            _cardSlope  = (CurrentBar >= 1) ? (Value[0] > Value[1] ? 1 : (Value[0] < Value[1] ? -1 : 0)) : 0;
+            _cardHasData = true;
+        }
+
+        // ── Sneaky glass card ──
+        protected override void OnRender(NinjaTrader.Gui.Chart.ChartControl chartControl, NinjaTrader.Gui.Chart.ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+            if (!ShowCard || RenderTarget == null || ChartPanel == null) return;
+            if (_sp == null) _sp = new SneakySkin.Painter();
+            _sp.Begin(RenderTarget);
+            try { RenderCard(); } catch (Exception _sx) { SneakyCore.Swallow("SneakyTillsonT3.OnRender", _sx); }
+            try { _sp.End(); } catch (Exception _sx) { SneakyCore.Swallow("SneakyTillsonT3.OnRender", _sx); }   // ALWAYS runs — a skipped End() would silently kill the card
+        }
+
+        public void ConductorRender(SharpDX.Direct2D1.RenderTarget rt)
+        {
+            if (rt == null) return;
+            try
+            {
+                if (_sp == null) _sp = new SneakySkin.Painter();
+                _sp.Begin(rt);
+                RenderCard();
+            }
+            catch { }
+            finally { try { _sp.End(); } catch { } }
+        }
+
+        private void RenderCard()
+        {
+            const float cw = 210f, ch = 92f;
+            SneakySkin.CardLayout.EnsureScrollHook(ChartControl);
+            var slot = SneakySkin.CardLayout.PlaceScroll(this, ChartControl, _sp,
+                ChartControl.ChartPanels[0].X, ChartControl.ChartPanels[0].Y, ChartControl.ChartPanels[0].W, ChartControl.ChartPanels[0].H, cw, ch);
+            if (slot.Width <= 0f) return;   // not the currently-selected card in the rotation
+
+            var slopeCol = _cardSlope > 0 ? SneakySkin.CUp : _cardSlope < 0 ? SneakySkin.CDown : SneakySkin.CMute;
+            string arrow = _cardSlope > 0 ? "▲" : _cardSlope < 0 ? "▼" : "▬";
+
+            var r = _sp.Card(slot.X, slot.Y, cw, ch, SneakySkin.CLine);
+            _sp.Dot(r.Left + 5f, r.Top + 8f, _cardHasData ? SneakySkin.CAccent : SneakySkin.CMute, _cardHasData);
+            _sp.Text("T3", r.Left + 16f, r.Top, r.Width - 70f, 16f, SneakySkin.CInk, 11f, true);
+            _sp.Pill("p" + Period + " b" + VFactor.ToString("0.##"), r.Right, r.Top - 1f, SneakySkin.CMute);
+
+            if (_cardHasData)
+            {
+                _sp.Text(arrow, r.Left, r.Top + 30f, 20f, 22f, slopeCol, 15f, false);
+                _sp.Text(_cardVal.ToString("0.####"), r.Left + 22f, r.Top + 28f, r.Width - 22f, 24f, SneakySkin.CInk, 17f, false);
+            }
+            else
+            {
+                _sp.Text("loading…", r.Left, r.Top + 30f, r.Width, 16f, SneakySkin.CMute, 10.5f);
+            }
+        }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> TillsonT3 => Values[0];
+
+        #region Properties
+        [Range(1, int.MaxValue)]
+        [NinjaScriptProperty]
+        [Display(Name = "Period", Description = "Lookback for each of the six cascaded EMAs (α = 2/(Period+1)).", Order = 1, GroupName = "Parameters")]
+        public int Period { get; set; }
+
+        [Range(0.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "V-Factor", Description = "Volume factor b (0..1). Controls the T3 responsiveness/overshoot trade-off; classic default 0.7.", Order = 2, GroupName = "Parameters")]
+        public double VFactor { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show Card", Order = 12, GroupName = "Sneaky")]
+        public bool ShowCard { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Card Corner", Description = "Which chart corner the Sneaky card docks to. Cards in the same corner auto-stack.", Order = 13, GroupName = "Sneaky")]
+        public SneakyCardCorner CardCorner { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show indicator label", Description = "Show NinjaTrader's chart name label. Sneaky default = OFF (clean chart); turn on to restore it.", Order = 100, GroupName = "Sneaky")]
+        public bool ShowIndicatorLabel { get; set; }
+        #endregion
+    }
+}
+
+#region NinjaScript generated code. Neither change nor remove.
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+	{
+		private Sneaky.Smoothers.SneakyTillsonT3_v1_0_0[] cacheSneakyTillsonT3_v1_0_0;
+		public Sneaky.Smoothers.SneakyTillsonT3_v1_0_0 SneakyTillsonT3_v1_0_0(int period, double vFactor, bool showCard, SneakyCardCorner cardCorner, bool showIndicatorLabel)
+		{
+			return SneakyTillsonT3_v1_0_0(Input, period, vFactor, showCard, cardCorner, showIndicatorLabel);
+		}
+
+		public Sneaky.Smoothers.SneakyTillsonT3_v1_0_0 SneakyTillsonT3_v1_0_0(ISeries<double> input, int period, double vFactor, bool showCard, SneakyCardCorner cardCorner, bool showIndicatorLabel)
+		{
+			if (cacheSneakyTillsonT3_v1_0_0 != null)
+				for (int idx = 0; idx < cacheSneakyTillsonT3_v1_0_0.Length; idx++)
+					if (cacheSneakyTillsonT3_v1_0_0[idx] != null && cacheSneakyTillsonT3_v1_0_0[idx].Period == period && cacheSneakyTillsonT3_v1_0_0[idx].VFactor == vFactor && cacheSneakyTillsonT3_v1_0_0[idx].ShowCard == showCard && cacheSneakyTillsonT3_v1_0_0[idx].CardCorner == cardCorner && cacheSneakyTillsonT3_v1_0_0[idx].ShowIndicatorLabel == showIndicatorLabel && cacheSneakyTillsonT3_v1_0_0[idx].EqualsInput(input))
+						return cacheSneakyTillsonT3_v1_0_0[idx];
+			return CacheIndicator<Sneaky.Smoothers.SneakyTillsonT3_v1_0_0>(new Sneaky.Smoothers.SneakyTillsonT3_v1_0_0(){ Period = period, VFactor = vFactor, ShowCard = showCard, CardCorner = cardCorner, ShowIndicatorLabel = showIndicatorLabel }, input, ref cacheSneakyTillsonT3_v1_0_0);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
+{
+	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+	{
+		public Indicators.Sneaky.Smoothers.SneakyTillsonT3_v1_0_0 SneakyTillsonT3_v1_0_0(int period, double vFactor, bool showCard, SneakyCardCorner cardCorner, bool showIndicatorLabel)
+		{
+			return indicator.SneakyTillsonT3_v1_0_0(Input, period, vFactor, showCard, cardCorner, showIndicatorLabel);
+		}
+
+		public Indicators.Sneaky.Smoothers.SneakyTillsonT3_v1_0_0 SneakyTillsonT3_v1_0_0(ISeries<double> input , int period, double vFactor, bool showCard, SneakyCardCorner cardCorner, bool showIndicatorLabel)
+		{
+			return indicator.SneakyTillsonT3_v1_0_0(input, period, vFactor, showCard, cardCorner, showIndicatorLabel);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+	{
+		public Indicators.Sneaky.Smoothers.SneakyTillsonT3_v1_0_0 SneakyTillsonT3_v1_0_0(int period, double vFactor, bool showCard, SneakyCardCorner cardCorner, bool showIndicatorLabel)
+		{
+			return indicator.SneakyTillsonT3_v1_0_0(Input, period, vFactor, showCard, cardCorner, showIndicatorLabel);
+		}
+
+		public Indicators.Sneaky.Smoothers.SneakyTillsonT3_v1_0_0 SneakyTillsonT3_v1_0_0(ISeries<double> input , int period, double vFactor, bool showCard, SneakyCardCorner cardCorner, bool showIndicatorLabel)
+		{
+			return indicator.SneakyTillsonT3_v1_0_0(input, period, vFactor, showCard, cardCorner, showIndicatorLabel);
+		}
+	}
+}
+
+#endregion

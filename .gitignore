@@ -1,0 +1,12 @@
+# NinjaTrader / Visual Studio build artifacts (in case this repo is ever
+# compiled in-place rather than imported as source .cs files)
+bin/Debug/
+bin/Release/
+obj/
+*.user
+*.suo
+.vs/
+
+# OS cruft
+.DS_Store
+Thumbs.db
