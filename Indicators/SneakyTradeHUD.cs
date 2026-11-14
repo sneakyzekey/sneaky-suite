@@ -270,6 +270,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Button[] btnRuleL = new Button[MaxAutoSlots], btnRuleS = new Button[MaxAutoSlots];
         private StackPanel longRows, shortRows;
         private Button btnAutoTrade, btnOpp, btnAddLong, btnRemoveLong, btnAddShort, btnRemoveShort; private TextBlock lblAutoInfo; private bool fillingCombos;
+        private Button btnTradeSide, btnReqBreak, btnReqConsec; private TextBlock lblConsecCount;
         private ScrollViewer bodyScroll; private Button btnSize; private static readonly double[] SizeSteps = { 1.0, 0.85, 0.7, 0.55, 0.45, 0.35 };
         private Account pendAcct;                                    // the account the entry went to (AUTO may resolve differently later)
         private string status = "";
@@ -1845,6 +1846,27 @@ namespace NinjaTrader.NinjaScript.Indicators
                         delegate { oppAction = (oppAction + 1) % 3; AutoOpposite = (SneakyHudOpposite)oppAction; UpdateUi(); }, 0);
                     rOp.Children.Add(btnOpp);
                     body.Children.Add(rOp);
+
+                    var rTs = Row(1);
+                    btnTradeSide = MkBtn("Trade side: BOTH", "Which signals AUTO TRADE is allowed to act on. BOTH (default): long and short signals both enter. LONG ONLY / SHORT ONLY: signals on the other side are ignored entirely. Click to change.",
+                        delegate { AutoTradeSide = (SneakyHudAutoSide)(((int)AutoTradeSide + 1) % 3); UpdateUi(); }, 0);
+                    rTs.Children.Add(btnTradeSide);
+                    body.Children.Add(rTs);
+
+                    var rRb = Row(1);
+                    btnReqBreak = MkBtn("Require break of signal bar: OFF", "OFF (default): enter right on the signal bar. ON: hold the signal and only enter once a LATER bar's high (long) / low (short) trades beyond the signal bar's own high/low - price has to actually follow through. Dropped if that break doesn't happen within 'Max bars to wait for the break' (indicator properties). Click to toggle.",
+                        delegate { AutoRequireBreakOfSignalBar = !AutoRequireBreakOfSignalBar; if (!AutoRequireBreakOfSignalBar) sigPendActive = false; UpdateUi(); }, 0);
+                    rRb.Children.Add(btnReqBreak);
+                    body.Children.Add(rRb);
+
+                    var rRc = Row(1);
+                    btnReqConsec = MkBtn("Require consecutive bars: OFF", "OFF (default): no bar-color requirement. ON: the bar an entry is about to trigger on, plus the N-1 bars before it (N set below), must all be up-closed (long) or down-closed (short) - e.g. 'up bar after up bar'. A doji breaks the run. Click to toggle.",
+                        delegate { AutoRequireConsecutiveBars = !AutoRequireConsecutiveBars; UpdateUi(); }, 0);
+                    rRc.Children.Add(btnReqConsec);
+                    body.Children.Add(rRc);
+                    body.Children.Add(Stepper("Consecutive bars needed", "How many bars N (including the entry bar) must all be the same color as the trade direction. Only applies while 'Require consecutive bars' above is ON.",
+                        delegate { return AutoConsecutiveBarsCount; }, delegate (int x) { AutoConsecutiveBarsCount = x; }, 1, 20, out lblConsecCount, null));
+
                     lblAutoInfo = Lbl(10, FgDim, FontWeights.Normal); lblAutoInfo.Margin = new Thickness(3, 2, 0, 0); lblAutoInfo.TextWrapping = TextWrapping.Wrap; if (!DockInChartTrader) lblAutoInfo.Width = 240;
                     body.Children.Add(lblAutoInfo);
                     FillCombos();
@@ -2048,6 +2070,24 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (btnRemoveShort != null) btnRemoveShort.Visibility = shortSlotCount > 1 ? Visibility.Visible : Visibility.Collapsed;
                     if (btnAddShort != null) btnAddShort.Visibility = shortSlotCount < MaxAutoSlots ? Visibility.Visible : Visibility.Collapsed;
                     btnOpp.Content = "On opposite signal: " + (oppAction == 0 ? "IGNORE" : (oppAction == 1 ? "CLOSE" : "REVERSE"));
+                    if (btnTradeSide != null)
+                    {
+                        string tsTxt = AutoTradeSide == SneakyHudAutoSide.Both ? "BOTH" : (AutoTradeSide == SneakyHudAutoSide.LongOnly ? "LONG ONLY" : "SHORT ONLY");
+                        btnTradeSide.Content = "Trade side: " + tsTxt;
+                        btnTradeSide.Foreground = AutoTradeSide == SneakyHudAutoSide.Both ? FgMain : (AutoTradeSide == SneakyHudAutoSide.LongOnly ? Green : Red);
+                        btnTradeSide.FontWeight = AutoTradeSide == SneakyHudAutoSide.Both ? FontWeights.Normal : FontWeights.Bold;
+                    }
+                    if (btnReqBreak != null)
+                    {
+                        btnReqBreak.Content = "Require break of signal bar: " + (AutoRequireBreakOfSignalBar ? (sigPendActive ? "ON (waiting...)" : "ON") : "OFF");
+                        btnReqBreak.Foreground = AutoRequireBreakOfSignalBar ? Amber : FgMain; btnReqBreak.FontWeight = AutoRequireBreakOfSignalBar ? FontWeights.Bold : FontWeights.Normal;
+                    }
+                    if (btnReqConsec != null)
+                    {
+                        btnReqConsec.Content = "Require consecutive bars: " + (AutoRequireConsecutiveBars ? "ON" : "OFF");
+                        btnReqConsec.Foreground = AutoRequireConsecutiveBars ? Amber : FgMain; btnReqConsec.FontWeight = AutoRequireConsecutiveBars ? FontWeights.Bold : FontWeights.Normal;
+                    }
+                    if (lblConsecCount != null) lblConsecCount.Text = AutoConsecutiveBarsCount.ToString();
                     string lim = (AutoMaxTradesPerDay > 0 ? "trades today " + autoTrades + "/" + AutoMaxTradesPerDay : "trades today " + autoTrades)
                                + (AutoStartHHmm != AutoEndHHmm ? "   window " + AutoStartHHmm.ToString("0000") + "-" + AutoEndHHmm.ToString("0000") : "");
                     lblAutoInfo.Text = (autoOn ? lim : "off  |  " + lim) + (autoNote.Length > 0 ? "\n" + autoNote : "");
