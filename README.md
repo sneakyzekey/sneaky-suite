@@ -19,7 +19,12 @@ a NinjaTrader 8 chart.
 | **SneakyWix9ineRanges**<br>![SneakyWix9ineRanges](screenshots/SneakyWix9ineRanges.png) | **SneakyEquityGate** — SIM-to-LIVE controller<br>![SneakyEquityGate](screenshots/SneakyEquityGate.png) |
 | **LinRegUTBotReversal + Sneaky Order Flow Dashboard**<br>![LinRegUTBotReversal + OrderFlowDashboard](screenshots/LinRegUTBotReversal_OrderFlowDashboard.png) | **PraedoxSentinel + TradeProtector**<br>![PraedoxSentinel + TradeProtector](screenshots/PraedoxSentinel_TradeProtector.png) |
 | **GodTradesStrategy**<br>![GodTradesStrategy](screenshots/GodTradesStrategy.png) | **TurtleTrendBreakout**<br>![TurtleTrendBreakout](screenshots/TurtleTrendBreakout.png) |
-| **TONebula RealFlow**<br>![TONebula RealFlow](screenshots/TONebula_RealFlow.png) | |
+| **TONebula RealFlow**<br>![TONebula RealFlow](screenshots/TONebula_RealFlow.png) | **SneakyLevelsLikelyToBreak**<br>![SneakyLevelsLikelyToBreak](screenshots/SneakyLevelsLikelyToBreak.png) |
+| **SneakyReversion** — Bollinger-based reversion<br>![SneakyReversion](screenshots/SneakyReversion.png) | **SneakyIctUnicorn**<br>![SneakyIctUnicorn](screenshots/SneakyIctUnicorn.png) |
+| **SneakyLiquiditySfpMss** — liquidity map panel<br>![SneakyLiquiditySfpMss](screenshots/SneakyLiquiditySfpMss.png) | **SneakyAlphaForgeFlow**<br>![SneakyAlphaForgeFlow](screenshots/SneakyAlphaForgeFlow.png) |
+| **SneakyVolumeImbalancePro**<br>![SneakyVolumeImbalancePro](screenshots/SneakyVolumeImbalancePro.png) | **SneakyVolumeProfilePro**<br>![SneakyVolumeProfilePro](screenshots/SneakyVolumeProfilePro.png) |
+| **SneakyFusion17** — God Mode X Fusion17 panel<br>![SneakyFusion17](screenshots/SneakyFusion17.png) | **SneakyCRT** — Candle Range Theory scanner<br>![SneakyCRT](screenshots/SneakyCRT.png) |
+| **SneakyDashBridge** — local trading dashboard<br>![SneakyDashBridge local dashboard](screenshots/SneakyDashBridge_LocalDashboard.png) | |
 
 ## Contents
 

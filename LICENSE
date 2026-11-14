@@ -45,6 +45,12 @@ Known examples include:
     indicator "RSI Strength & Consolidation Zones," by Zeiierman.
   - SneakySuperTrendCluster.cs -- adapted from the TradingView Pine Script
     indicator "SuperTrend Cluster," by Zeiierman.
+  - SneakyLevelsLikelyToBreak.cs -- adapted from the TradingView Pine
+    Script indicator "Levels Likely to Break," by Zeiierman.
+  - SneakyIctUnicorn.cs -- adapted from the TradingView Pine Script
+    indicator "Unicorn," by the TradingView author LuxFX.
+  - SneakyFusion17.cs -- a NinjaTrader 8 port of "DrFX God Mode X Fusion17,"
+    a TradingView indicator by a third-party author.
 
 Other files in this repository may likewise incorporate logic ported or
 adapted from third-party public scripts that have not yet been individually
