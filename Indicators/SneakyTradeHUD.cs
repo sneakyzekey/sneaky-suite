@@ -97,6 +97,7 @@ using NinjaTrader.NinjaScript;
 public enum SneakyHudCorner { TopLeft, TopRight, BottomLeft, BottomRight }
 public enum SneakyHudOpposite { Ignore, Close, Reverse }
 public enum SneakyHudTrail { FixedDistance, Atr, BarLowHigh, Chandelier, Ema, PercentOfProfit, Step }
+public enum SneakyHudAutoSide { Both, LongOnly, ShortOnly }
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
@@ -261,6 +262,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
         private volatile bool autoOn; private Account autoAcct;
         private int oppAction, autoEvalBar = -1, autoEvalDue, autoTrades, revDir; private DateTime autoDay = DateTime.MinValue, revUntil, closeStart;
+        // "Require break of signal bar" bookkeeping: a signal that's waiting for a LATER bar to break its own signal bar's high/low
+        private bool sigPendActive; private int sigPendDir, sigPendBar; private double sigPendHigh, sigPendLow;
         private bool closing, closeSent;
         private string autoNote = "";
         private ComboBox[] cbLong = new ComboBox[MaxAutoSlots], cbShort = new ComboBox[MaxAutoSlots];
@@ -337,6 +340,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AutoShortSource1 = ""; AutoShortRule1 = 1; AutoShortValue1 = 0;
                 HudScale = 0.55; BodyMaxHeight = 560; AutoOpposite = SneakyHudOpposite.Ignore;
                 AutoMaxTradesPerDay = 10; AutoStartHHmm = 0; AutoEndHHmm = 0; AutoDailyLossLimit = 0;
+                AutoTradeSide = SneakyHudAutoSide.Both; AutoRequireBreakOfSignalBar = false; AutoBreakMaxBars = 20; AutoRequireConsecutiveBars = false; AutoConsecutiveBarsCount = 2;
                 TrailAtrPeriod = 14; TrailAtrMult = 2.0; TrailBars = 3; TrailBarOffsetTicks = 2; ChandelierMult = 3.0;
                 TrailEmaPeriod = 21; TrailEmaOffsetTicks = 4; TrailPercent = 50; TrailStepPoints = 10.0;
                 FlattenKeepsStrategies = false;
@@ -1235,12 +1239,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
         private void ToggleAuto()
         {
-            if (autoOn) { autoOn = false; revDir = 0; SetStatus("AUTO TRADE off."); return; }
+            if (autoOn) { autoOn = false; revDir = 0; sigPendActive = false; SetStatus("AUTO TRADE off."); return; }
             Account a = acct;
             if (a == null) { SetStatus("AUTO TRADE: no account resolved."); return; }
             if (!srcLong.Any(x => x != null) && !srcShort.Any(x => x != null)) { SetStatus("AUTO TRADE: pick a LONG and / or SHORT signal plot first."); return; }
             if (State != State.Realtime) { SetStatus("AUTO TRADE: the chart is not live yet."); return; }
-            autoAcct = a; autoEvalBar = -1; revDir = 0; closing = false; autoNote = "";
+            autoAcct = a; autoEvalBar = -1; revDir = 0; closing = false; autoNote = ""; sigPendActive = false;
             autoOn = true;
             string m = "AUTO TRADE ON  -  account " + a.Name + ", qty " + entQty + ", stop " + entSl + "t, target " + (entTp > 0 ? entTp + "t" : "none")
                      + "  |  long: " + SideDesc(srcLong, ruleLong, valLong) + "  |  short: " + SideDesc(srcShort, ruleShort, valShort);
@@ -1284,12 +1288,61 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!autoOn) return;
             Account a = autoAcct;
             if (a == null) return;
+
+            // "Require break of signal bar": a signal that's waiting for a LATER bar to break its own signal bar's high/low.
+            // Checked every bar it stays pending, even bars with no fresh signal of their own.
+            if (sigPendActive)
+            {
+                if (bar - sigPendBar > AutoBreakMaxBars) { sigPendActive = false; AutoSay("pending " + (sigPendDir > 0 ? "LONG" : "SHORT") + " signal expired - no break within " + AutoBreakMaxBars + " bars"); }
+                else
+                {
+                    bool brokeOut = sigPendDir > 0 ? Bars.GetHigh(bar) > sigPendHigh : Bars.GetLow(bar) < sigPendLow;
+                    if (brokeOut)
+                    {
+                        int d = sigPendDir; sigPendActive = false;   // one shot: resolved either way
+                        if (!AutoRequireConsecutiveBars || ConsecutiveBarsOkAuto(d, bar)) HandleAutoSignal(a, d);
+                        else AutoSay((d > 0 ? "LONG" : "SHORT") + " break confirmed but consecutive-bar filter not met - skipped");
+                    }
+                }
+            }
+
             // fires only on the bar where the condition BECOMES true, so a plot that stays at 1 does not re-enter every bar
             bool L = SideTrue(srcLong, ruleLong, valLong, bar);
             bool S = SideTrue(srcShort, ruleShort, valShort, bar);
+            if (AutoTradeSide == SneakyHudAutoSide.LongOnly) S = false;
+            else if (AutoTradeSide == SneakyHudAutoSide.ShortOnly) L = false;
             if (!L && !S) return;
             if (L && S) { AutoSay("long AND short signal on the same bar - ignored"); return; }
             int dir = L ? 1 : -1;
+
+            if (AutoRequireBreakOfSignalBar)
+            {
+                // hold the signal; only act once a later bar actually breaks this signal bar's high/low (checked above)
+                sigPendActive = true; sigPendDir = dir; sigPendHigh = Bars.GetHigh(bar); sigPendLow = Bars.GetLow(bar); sigPendBar = bar;
+                AutoSay((dir > 0 ? "LONG" : "SHORT") + " signal - waiting for a break of the signal bar's " + (dir > 0 ? "high" : "low") + " before entering");
+                return;
+            }
+            if (AutoRequireConsecutiveBars && !ConsecutiveBarsOkAuto(dir, bar)) { AutoSay((dir > 0 ? "LONG" : "SHORT") + " signal skipped - consecutive-bar filter not met"); return; }
+            HandleAutoSignal(a, dir);
+        }
+        // true when the given absolute bar index, plus the (AutoConsecutiveBarsCount - 1) bars immediately before it, are
+        // all the same color as the trade direction: Close > Open ("up bar") for a long, Close < Open ("down bar") for a short.
+        private bool ConsecutiveBarsOkAuto(int dir, int bar)
+        {
+            int n = AutoConsecutiveBarsCount;
+            if (bar < n - 1) return false;
+            for (int k = 0; k < n; k++)
+            {
+                int b = bar - k;
+                double o = Bars.GetOpen(b), c = Bars.GetClose(b);
+                if (dir > 0) { if (!(c > o)) return false; }
+                else { if (!(c < o)) return false; }
+            }
+            return true;
+        }
+        // acts on a (possibly deferred) LONG/SHORT signal: reverse/close on an opposite open trade, or enter flat
+        private void HandleAutoSignal(Account a, int dir)
+        {
             string sig = (dir > 0 ? "LONG" : "SHORT") + " signal";
             DateTime now = DateTime.Now;
             if (now.Date != autoDay) { autoDay = now.Date; autoTrades = 0; }
@@ -2287,6 +2340,23 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(0, 1000000)]
         [Display(Name = "Stop new auto entries after the account loses ($ today, 0 = off)", Description = "Uses the ACCOUNT's realized P&L for the day, so it includes trades from anything else on that account.", GroupName = "6. Auto trade", Order = 9)]
         public double AutoDailyLossLimit { get; set; }
+
+        [Display(Name = "Trade side", Description = "Both (default): a LONG or SHORT signal either one can enter. Long only / Short only: signals on the other side are ignored entirely.", GroupName = "6. Auto trade", Order = 10)]
+        public SneakyHudAutoSide AutoTradeSide { get; set; }
+
+        [Display(Name = "Require break of signal bar", Description = "OFF (default): enter right on the signal bar, as before. ON: hold the signal and wait - only enter once a LATER bar's high (long) / low (short) trades beyond the signal bar's own high/low, i.e. price actually follows through past where the signal printed. Dropped (no trade) if the break hasn't happened within the bar limit below.", GroupName = "6. Auto trade", Order = 11)]
+        public bool AutoRequireBreakOfSignalBar { get; set; }
+
+        [Range(1, 500)]
+        [Display(Name = "Max bars to wait for the break", GroupName = "6. Auto trade", Order = 12)]
+        public int AutoBreakMaxBars { get; set; }
+
+        [Display(Name = "Require N consecutive same-color bars", Description = "OFF (default): no bar-color requirement. ON: the bar an entry is about to trigger on, plus the N-1 bars before it, must all be the same color as the trade direction - up-closed bars (Close > Open) for a long, down-closed bars (Close < Open) for a short (e.g. N=2 needs 'up bar after up bar' for a long). A doji (Close == Open) breaks the run and blocks that entry. Works standalone or combined with the break-of-signal-bar filter above (checked on whichever bar the entry would otherwise fire on).", GroupName = "6. Auto trade", Order = 13)]
+        public bool AutoRequireConsecutiveBars { get; set; }
+
+        [Range(1, 20)]
+        [Display(Name = "Consecutive bars needed", GroupName = "6. Auto trade", Order = 14)]
+        public int AutoConsecutiveBarsCount { get; set; }
 
         [Display(Name = "Trail mode at start", Description = "Trail mode the HUD starts in. It can be changed on the HUD at any time.", GroupName = "4. Trailing", Order = 0)]
         public SneakyHudTrail TrailModeDefault { get; set; }
