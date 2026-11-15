@@ -130,6 +130,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             public int XT = -1;                 // bar index (CurrentBar) of the extreme this signal tracks
             public DateTime XTime;
             public double IvKey = double.NaN, IvTop, IvBot; public int IvBar, IvR = -1, IvLockBar;
+            public int Spawn;                   // CurrentBar when the IFVG was confirmed (inversion candle)
             public string IvTag = "IFVG";
             public double SwL = double.NaN; public DateTime SwT; public string SwN = "$$$";
             public double TgL = double.NaN; public DateTime TgT; public double TgStop = double.NaN;
@@ -157,6 +158,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private class LqPool { public double Lvl; public DateTime T; public int N; public bool Major; }
         private readonly List<LqPool> lqHi = new List<LqPool>(), lqLo = new List<LqPool>();
         private DateTime? lqSwHiT, lqSwLoT;
+        // level + pivot time of the most recently swept pool (the "$$$" that an IFVG reversed from)
+        private double lqSwHiLvl = double.NaN, lqSwLoLvl = double.NaN;
+        private DateTime lqSwHiPT, lqSwLoPT;
 
         // ───────────────────────── fields: sessions / key levels ─────────────────────────
         private double asiaH = double.NaN, asiaL = double.NaN, lonH = double.NaN, lonL = double.NaN, nyH = double.NaN, nyL = double.NaN;
@@ -602,12 +606,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             CheckSessionSweep(ref tkNyH, nyH, nyHT, true, "NY H");
             CheckSessionSweep(ref tkNyL, nyL, nyLT, false, "NY L");
 
-            DrawSessionLine("IctSesAsH", ShowSessionsAndLiquidity, asiaH, asiaHT, tkAsH, "ASIA H", Brushes.Orange);
-            DrawSessionLine("IctSesAsL", ShowSessionsAndLiquidity, asiaL, asiaLT, tkAsL, "ASIA L", Brushes.Orange);
-            DrawSessionLine("IctSesLoH", ShowSessionsAndLiquidity, lonH, lonHT, tkLoH, "LDN H", Brushes.DodgerBlue);
-            DrawSessionLine("IctSesLoL", ShowSessionsAndLiquidity, lonL, lonLT, tkLoL, "LDN L", Brushes.DodgerBlue);
-            DrawSessionLine("IctSesNyH", ShowSessionsAndLiquidity, nyH, nyHT, tkNyH, "NY H", Brushes.Crimson);
-            DrawSessionLine("IctSesNyL", ShowSessionsAndLiquidity, nyL, nyLT, tkNyL, "NY L", Brushes.Crimson);
+            DrawSessionLine("IctSesAsH", ShowSessionsAndLiquidity, asiaH, asiaHT, tkAsH, "ASIA H", SesAsBrush);
+            DrawSessionLine("IctSesAsL", ShowSessionsAndLiquidity, asiaL, asiaLT, tkAsL, "ASIA L", SesAsBrush);
+            DrawSessionLine("IctSesLoH", ShowSessionsAndLiquidity, lonH, lonHT, tkLoH, "LDN H", SesLdnBrush);
+            DrawSessionLine("IctSesLoL", ShowSessionsAndLiquidity, lonL, lonLT, tkLoL, "LDN L", SesLdnBrush);
+            DrawSessionLine("IctSesNyH", ShowSessionsAndLiquidity, nyH, nyHT, tkNyH, "NY H", SesNyBrush);
+            DrawSessionLine("IctSesNyL", ShowSessionsAndLiquidity, nyL, nyLT, tkNyL, "NY L", SesNyBrush);
 
             // ── opens: midnight / 8:30 / 9:30 ──
             UpdateOpen(nyMin, 0, ref midO, ref midT);
@@ -615,9 +619,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             UpdateOpen(nyMin, 570, ref o930, ref t930);
             lastNyMin = nyMin; lastNyMinValid = true;
             bool todayMid = sesDayTSet && midT >= sesDayT, today830 = sesDayTSet && t830 >= sesDayT, today930 = sesDayTSet && t930 >= sesDayT;
-            DrawOpenLine("IctMid", ShowOpens && todayMid, midO, midT, "MIDNIGHT", Brushes.RoyalBlue);
-            DrawOpenLine("Ict830", ShowOpens && today830, o830, t830, "8:30", Brushes.Goldenrod);
-            DrawOpenLine("Ict930", ShowOpens && today930, o930, t930, "9:30", Brushes.Crimson);
+            DrawOpenLine("IctMid", ShowOpens && todayMid, midO, midT, "MIDNIGHT", KlMidBrush);
+            DrawOpenLine("Ict830", ShowOpens && today830, o830, t830, "8:30", Kl830Brush);
+            DrawOpenLine("Ict930", ShowOpens && today930, o930, t930, "9:30", Kl930Brush);
 
             DrawKeyLevelLine("IctPdh", ShowPrevHLC, pdh, "PDH", Brushes.Black, DashStyleHelper.Dash);
             DrawKeyLevelLine("IctPdl", ShowPrevHLC, pdl, "PDL", Brushes.Black, DashStyleHelper.Dash);
@@ -750,9 +754,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (isPivLow) AddOrMergePool(lqLo, plVal, Time[majLen], true, tol);
 
             for (int i = lqHi.Count - 1; i >= 0; i--)
-                if (High[0] > lqHi[i].Lvl) { lqSwHiT = Time[0]; FireLiquiditySweepAlert(true, lqHi[i].Lvl); lqHi.RemoveAt(i); }
+                if (High[0] > lqHi[i].Lvl) { lqSwHiT = Time[0]; lqSwHiLvl = lqHi[i].Lvl; lqSwHiPT = lqHi[i].T; FireLiquiditySweepAlert(true, lqHi[i].Lvl); lqHi.RemoveAt(i); }
             for (int i = lqLo.Count - 1; i >= 0; i--)
-                if (Low[0] < lqLo[i].Lvl) { lqSwLoT = Time[0]; FireLiquiditySweepAlert(false, lqLo[i].Lvl); lqLo.RemoveAt(i); }
+                if (Low[0] < lqLo[i].Lvl) { lqSwLoT = Time[0]; lqSwLoLvl = lqLo[i].Lvl; lqSwLoPT = lqLo[i].T; FireLiquiditySweepAlert(false, lqLo[i].Lvl); lqLo.RemoveAt(i); }
 
             int bHi = NearestBeyond(lqHi, Close[0], true);
             int bLo = NearestBeyond(lqLo, Close[0], false);
@@ -859,12 +863,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 // premium/discount gate for this box's own timeframe range, used by HfPremiumDiscountOnly
                 b.PdOk = ComputeHfPdOk(b);
-                bool visible = ShowAll || IsNear(b.Top, b.Bot);
+                // Pine default (SHOW ALL off): HTF FVG / IFVG boxes are not drawn at all
+                bool visible = ShowAll;
                 if (HfPremiumDiscountOnly && !b.PdOk) visible = false;
                 if (visible)
                 {
-                    Brush fill = b.Inv ? (b.Dir == 1 ? Brushes.DodgerBlue : Brushes.Firebrick) : (b.Dir == 1 ? Brushes.MediumSeaGreen : Brushes.DimGray);
-                    Draw.Rectangle(this, b.Tag, false, HfShort ? 8 : CurrentBar, b.Top, HfShort ? -8 : 0, b.Bot, fill, fill, 25);
+                    // Pine: FVG bull #26A69A (transp 75) / bear black (transp 72); IFVG bull #2962FF / bear #F23645 (transp 80)
+                    Brush fill = b.Inv ? (b.Dir == 1 ? SesLdnBrush : SesNyBrush) : (b.Dir == 1 ? HfBullBrush : Brushes.Black);
+                    Draw.Rectangle(this, b.Tag, false, HfShort ? 8 : CurrentBar, b.Top, HfShort ? -8 : 0, b.Bot, fill, fill, b.Inv ? 20 : 25);
                     Draw.Text(this, b.Tag + "Lb", false, (b.Dir == 1 ? "BULL " : "BEAR ") + (b.Inv ? "IFVG " : "") + NameOf(GetSlotTf(b.Slot)), HfShort ? -9 : -1, b.Top, 0, Brushes.Black, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
                 }
                 else { RemoveDrawObject(b.Tag); RemoveDrawObject(b.Tag + "Lb"); }
@@ -983,15 +989,35 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!r.Shown && r.Hi - r.Lo >= minAtrMult * atrRef && r.NCl >= minCloses) promote = true;
             return r;
         }
-        private void KillPdRng(PdRng r) { if (r != null) { RemoveDrawObject(r.Tag); RemoveDrawObject(r.Tag + "D"); RemoveDrawObject(r.Tag + "Eq"); } }
+        private void KillPdRng(PdRng r)
+        {
+            if (r == null) return;
+            foreach (string s in new[] { "", "D", "Eq", "PremLb", "DiscLb", "EqLb" }) RemoveDrawObject(r.Tag + s);
+        }
+        // session + open colours from the Pine inputs (sesAsCol / sesLoCol / sesNyCol / KL_MID / KL_830 / KL_930)
+        private static readonly Brush HfBullBrush = MakeFrozenBrush(0x26, 0xA6, 0x9A);
+        private static readonly Brush SesAsBrush = MakeFrozenBrush(0xF5, 0xA8, 0x00);
+        private static readonly Brush SesLdnBrush = MakeFrozenBrush(0x29, 0x62, 0xFF);
+        private static readonly Brush SesNyBrush = MakeFrozenBrush(0xF2, 0x36, 0x45);
+        private static readonly Brush KlMidBrush = MakeFrozenBrush(0x29, 0x62, 0xFF);
+        private static readonly Brush Kl830Brush = MakeFrozenBrush(0xF5, 0xB8, 0x00);
+        private static readonly Brush Kl930Brush = MakeFrozenBrush(0xF2, 0x36, 0x45);
+        private static readonly Brush PdPremBrush = MakeFrozenBrush(0xF2, 0x36, 0x45);
+        private static readonly Brush PdDiscBrush = MakeFrozenBrush(0x08, 0x99, 0x81);
+        private static readonly Brush PdTxtBrush  = MakeFrozenBrush(0x78, 0x7B, 0x86);
         private void DrawPdRange(PdRng r, bool on)
         {
             if (r == null || !on) return;
             double eqv = (r.Hi + r.Lo) / 2.0;
             int t0Back = GetBarsAgo(r.T0);
-            Draw.Rectangle(this, r.Tag, false, t0Back, r.Hi, -10, eqv, Brushes.OrangeRed, Brushes.OrangeRed, 15);
-            Draw.Rectangle(this, r.Tag + "D", false, t0Back, eqv, -10, r.Lo, Brushes.Teal, Brushes.Teal, 15);
-            Draw.Line(this, r.Tag + "Eq", false, t0Back, eqv, -10, eqv, Brushes.Gray, DashStyleHelper.Dash, 1);
+            // Pine: PREMIUM #F23645 and DISCOUNT #089981 at transp 85 (opacity 15), EQ 50% dashed #787B86,
+            // all running from the impulse start to the current bar (no projection), with the labels in #787B86.
+            Draw.Rectangle(this, r.Tag, false, t0Back, r.Hi, 0, eqv, Brushes.Transparent, PdPremBrush, 15);
+            Draw.Rectangle(this, r.Tag + "D", false, t0Back, eqv, 0, r.Lo, Brushes.Transparent, PdDiscBrush, 15);
+            Draw.Line(this, r.Tag + "Eq", false, t0Back, eqv, 0, eqv, PdTxtBrush, DashStyleHelper.Dash, 1);
+            Draw.Text(this, r.Tag + "PremLb", false, "PREMIUM", 0, r.Hi, 0, PdTxtBrush, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Right, Brushes.Transparent, Brushes.Transparent, 0);
+            Draw.Text(this, r.Tag + "DiscLb", false, "DISCOUNT", 0, r.Lo, 0, PdTxtBrush, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Right, Brushes.Transparent, Brushes.Transparent, 0);
+            Draw.Text(this, r.Tag + "EqLb", false, "EQ 50%", 0, eqv, 0, PdTxtBrush, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Right, Brushes.Transparent, Brushes.Transparent, 0);
         }
         private void CheckPdAlert(PdRng r)
         {
@@ -1026,19 +1052,122 @@ namespace NinjaTrader.NinjaScript.Indicators
             ComputeHtfRow(pdHtfBipD, out pdDd, out pdDH, out pdDL, out bool dHit);
             ComputeHtfRow(pdHtfBip4, out pd4d, out pd4H, out pd4L, out bool hit4);
             ComputeHtfRow(pdHtfBip1, out pd1d, out pd1H, out pd1L, out bool hit1);
-            if (!PdTable) { RemoveDrawObject("IctPdTbl"); return; }
+            RemoveDrawObject("IctPdTbl");   // older text-box version, no longer drawn
+            if (!PdTable) { pdTblRows = null; return; }
 
             int chartSec = chartIsMinutes ? chartMinutes * 60 : (BarsPeriod.BarsPeriodType == BarsPeriodType.Day ? 86400 : 60);
-            var rows = new List<string>(); int nBu = 0, nBe = 0;
-            rows.Add(FormatPdRow("W", pdWd, pdWH, pdWL, wHit)); if (pdWd == 1) nBu++; else if (pdWd == -1) nBe++;
-            if (chartSec <= 86400) { rows.Add(FormatPdRow("D", pdDd, pdDH, pdDL, dHit)); if (pdDd == 1) nBu++; else if (pdDd == -1) nBe++; }
-            if (chartSec <= 14400) { rows.Add(FormatPdRow("4H", pd4d, pd4H, pd4L, hit4)); if (pd4d == 1) nBu++; else if (pd4d == -1) nBe++; }
-            if (chartSec <= 3600) { rows.Add(FormatPdRow("1H", pd1d, pd1H, pd1L, hit1)); if (pd1d == 1) nBu++; else if (pd1d == -1) nBe++; }
+            var rows = new List<PdTblRow>(); int nBu = 0, nBe = 0;
+            rows.Add(MakePdRow("W", pdWd, pdWH, pdWL, wHit)); if (pdWd == 1) nBu++; else if (pdWd == -1) nBe++;
+            if (chartSec <= 86400) { rows.Add(MakePdRow("D", pdDd, pdDH, pdDL, dHit)); if (pdDd == 1) nBu++; else if (pdDd == -1) nBe++; }
+            if (chartSec <= 14400) { rows.Add(MakePdRow("4H", pd4d, pd4H, pd4L, hit4)); if (pd4d == 1) nBu++; else if (pd4d == -1) nBe++; }
+            if (chartSec <= 3600) { rows.Add(MakePdRow("1H", pd1d, pd1H, pd1L, hit1)); if (pd1d == 1) nBu++; else if (pd1d == -1) nBe++; }
             int nT = nBu + nBe;
-            string bias = nT == 0 || nBu == nBe ? "MIXED" : nBu > nBe ? "BULLISH " + nBu + "/" + nT : "BEARISH " + nBe + "/" + nT;
-            string panel = "8 AM BREAKOUT — PD TABLE\nTF  BIAS ZONE 50%\n" + string.Join("\n", rows) + "\nHTF: " + bias;
-            Draw.TextFixed(this, "IctPdTbl", panel, TextPosition.TopRight, Brushes.White, new SimpleFont("Arial", 10), Brushes.Transparent, Brushes.DimGray, 20);
+            pdTblSide = nT == 0 || nBu == nBe ? 0 : nBu > nBe ? 1 : -1;
+            pdTblBias = pdTblSide == 0 ? "MIXED" : pdTblSide == 1 ? "BULLISH " + nBu + "/" + nT : "BEARISH " + nBe + "/" + nT;
+            pdTblRows = rows.ToArray();   // drawn by OnRender as a coloured grid (Pine table layout)
         }
+        // ── PD table: snapshot built in OnBarUpdate, painted in OnRender (Pine table cells, same colours) ──
+        private struct PdTblRow { public string Tf; public bool Has; public int Dir; public string Zone; public bool Hit; }
+        private PdTblRow[] pdTblRows;
+        private string pdTblBias = "";
+        private int pdTblSide;   // 1 bull, -1 bear, 0 mixed
+
+        private PdTblRow MakePdRow(string tf, int d, double hi, double lo, bool hit50)
+        {
+            var r = new PdTblRow { Tf = tf, Dir = d, Has = d != 0 && !double.IsNaN(hi) && !double.IsNaN(lo), Hit = hit50 };
+            if (!r.Has) return r;
+            double eq = (hi + lo) / 2.0;
+            r.Zone = Close[0] > hi ? "ABOVE" : Close[0] < lo ? "BELOW" : Math.Abs(Close[0] - eq) <= 0.05 * (hi - lo) ? "EQ" : Close[0] > eq ? "PREM" : "DISC";
+            return r;
+        }
+
+        private static SharpDX.Color4 PdDx(byte r, byte g, byte b) { return new SharpDX.Color4(r / 255f, g / 255f, b / 255f, 1f); }
+
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+            if (!PdTable || pdTblRows == null || RenderTarget == null || ChartPanel == null) return;
+
+            var dw = NinjaTrader.Core.Globals.DirectWriteFactory;
+            float[] cw = { 40f, 54f, 76f, 44f };          // TF · BIAS(arrow) · ZONE · 50%
+            float rowH = 16f;
+            float W = cw[0] + cw[1] + cw[2] + cw[3];
+            int nRows = pdTblRows.Length + 3;             // title + header + rows + HTF bias row
+            float H = nRows * rowH;
+            float x = ChartPanel.X + ChartPanel.W - W - 12f;
+            float y = ChartPanel.Y + 8f;
+
+            var bgC    = PdDx(0x1E, 0x24, 0x33);   // DB_BG
+            var frameC = PdDx(0x2A, 0x2E, 0x39);   // DB_FRAME
+            var lblC   = PdDx(0xB2, 0xB5, 0xBE);   // DB_LBL
+            var ttlC   = PdDx(0xFF, 0x98, 0x00);   // DB_TTL
+            var upT    = PdDx(0x22, 0xAB, 0x94);   // DB_UPT
+            var upB    = PdDx(0xD1, 0xF5, 0xE0);   // DB_UPB
+            var dnT    = PdDx(0xF2, 0x36, 0x45);   // DB_DNT
+            var dnB    = PdDx(0xFF, 0xD6, 0xD9);   // DB_DNB
+            var orT    = PdDx(0xFF, 0x7A, 0x00);   // DB_ORT
+            var orB    = PdDx(0xFF, 0xE9, 0xD0);   // DB_ORB
+            var netT   = PdDx(0x95, 0x98, 0xA1);   // DB_NET
+            var neB    = PdDx(0xE0, 0xE3, 0xEB);   // DB_NEB
+
+            using (var fTitle = new SharpDX.DirectWrite.TextFormat(dw, "Arial", SharpDX.DirectWrite.FontWeight.Bold, SharpDX.DirectWrite.FontStyle.Normal, 9f))
+            using (var fCell  = new SharpDX.DirectWrite.TextFormat(dw, "Arial", SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 9f))
+            using (var fBold  = new SharpDX.DirectWrite.TextFormat(dw, "Arial", SharpDX.DirectWrite.FontWeight.Bold, SharpDX.DirectWrite.FontStyle.Normal, 9f))
+            {
+                fTitle.TextAlignment = SharpDX.DirectWrite.TextAlignment.Center; fTitle.ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center;
+                fCell.TextAlignment  = SharpDX.DirectWrite.TextAlignment.Center; fCell.ParagraphAlignment  = SharpDX.DirectWrite.ParagraphAlignment.Center;
+                fBold.TextAlignment  = SharpDX.DirectWrite.TextAlignment.Center; fBold.ParagraphAlignment  = SharpDX.DirectWrite.ParagraphAlignment.Center;
+
+                float ry = y;
+                // title (merged across all four columns)
+                PdCell(x, ry, W, rowH, "8 AM BREAKOUT", fTitle, bgC, ttlC, frameC);
+                ry += rowH;
+                // header
+                float cx = x;
+                string[] head = { "TF", "BIAS", "ZONE", "50%" };
+                for (int c = 0; c < 4; c++) { PdCell(cx, ry, cw[c], rowH, head[c], fCell, bgC, lblC, frameC); cx += cw[c]; }
+                ry += rowH;
+                // one row per timeframe
+                foreach (var r in pdTblRows)
+                {
+                    cx = x;
+                    PdCell(cx, ry, cw[0], rowH, r.Tf, fCell, bgC, lblC, frameC); cx += cw[0];
+                    if (r.Has)
+                    {
+                        bool up = r.Dir == 1;
+                        PdCell(cx, ry, cw[1], rowH, up ? "▲" : "▼", fBold, up ? upB : dnB, up ? upT : dnT, frameC); cx += cw[1];
+                        bool dn = r.Zone == "PREM" || r.Zone == "ABOVE";
+                        bool upZ = r.Zone == "DISC" || r.Zone == "BELOW";
+                        PdCell(cx, ry, cw[2], rowH, r.Zone, fCell, dn ? dnB : upZ ? upB : orB, dn ? dnT : upZ ? upT : orT, frameC); cx += cw[2];
+                        PdCell(cx, ry, cw[3], rowH, r.Hit ? "✓" : "✗", fCell, bgC, r.Hit ? upT : netT, frameC);
+                    }
+                    else
+                    {
+                        PdCell(cx, ry, cw[1], rowH, "—", fCell, bgC, netT, frameC); cx += cw[1];
+                        PdCell(cx, ry, cw[2], rowH, "—", fCell, bgC, netT, frameC); cx += cw[2];
+                        PdCell(cx, ry, cw[3], rowH, "—", fCell, bgC, netT, frameC);
+                    }
+                    ry += rowH;
+                }
+                // HTF bias row: label + merged bias cell
+                PdCell(x, ry, cw[0], rowH, "HTF", fCell, bgC, lblC, frameC);
+                float bw = W - cw[0];
+                if (pdTblSide == 1) PdCell(x + cw[0], ry, bw, rowH, pdTblBias, fBold, upB, upT, frameC);
+                else if (pdTblSide == -1) PdCell(x + cw[0], ry, bw, rowH, pdTblBias, fBold, dnB, dnT, frameC);
+                else PdCell(x + cw[0], ry, bw, rowH, pdTblBias, fBold, neB, netT, frameC);
+            }
+        }
+
+        private void PdCell(float x, float y, float w, float h, string text, SharpDX.DirectWrite.TextFormat f, SharpDX.Color4 bg, SharpDX.Color4 fg, SharpDX.Color4 frame)
+        {
+            using (var bb = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, bg))
+                RenderTarget.FillRectangle(new SharpDX.RectangleF(x, y, w, h), bb);
+            using (var tb = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, fg))
+                RenderTarget.DrawText(text ?? "", f, new SharpDX.RectangleF(x, y, w, h), tb);
+            using (var fb = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, frame))
+                RenderTarget.DrawRectangle(new SharpDX.RectangleF(x + 0.5f, y + 0.5f, w - 1f, h - 1f), fb, 1f);
+        }
+
         private string FormatPdRow(string tag, int d, double hi, double lo, bool hit50)
         {
             if (d == 0 || double.IsNaN(hi) || double.IsNaN(lo)) return tag + "  —    —    —";
@@ -1229,11 +1358,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (IfvgRequireTarget && double.IsNaN(tgt)) return;
 
             sigSeq++;
+            // the swept liquidity this IFVG reversed from ("$$$"), if the sweep is recent enough
+            bool swRecent = dir == 1 ? (lqSwLoT.HasValue && GetBarsAgo(lqSwLoT.Value) <= IfvgLookback)
+                                     : (lqSwHiT.HasValue && GetBarsAgo(lqSwHiT.Value) <= IfvgLookback);
             var sig = new IctSig
             {
                 Bear = dir == -1,
-                IvTop = top, IvBot = bot, IvBar = bar, IvKey = (top + bot) / 2.0,
+                IvTop = top, IvBot = bot, IvBar = bar, IvKey = (top + bot) / 2.0, Spawn = CurrentBar,
                 TgL = tgt, TgHit = false, Gone = false, Swept = false, IvHit = false,
+                SwL = swRecent ? (dir == 1 ? lqSwLoLvl : lqSwHiLvl) : double.NaN,
+                SwT = dir == 1 ? lqSwLoPT : lqSwHiPT,
+                XTime = dir == 1 ? (lqSwLoT ?? Time[0]) : (lqSwHiT ?? Time[0]),
+                TgT = Time[0],
                 Tag = "IctIfvg" + sigSeq
             };
             if (dir == 1) ivOwnBull = sig; else ivOwnBear = sig;
@@ -1257,8 +1393,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             // CISD-on-IFVG annotation: the run-engine's confirmation on the same side, arriving after the IFVG formed
             if (!sig.Cisd && IfvgShowCisd)
             {
-                if (dir == 1 && _pendingCiBu) { sig.Cisd = true; sig.CiT = Time[0]; sig.CiY = Close[0]; sig.CiX = Time[0]; }
-                if (dir == -1 && _pendingCiBe) { sig.Cisd = true; sig.CiT = Time[0]; sig.CiY = Close[0]; sig.CiX = Time[0]; }
+                // CISD line runs from the run's open (pending X/Y) to a few candles past the CISD candle
+                if (dir == 1 && _pendingCiBu) { sig.Cisd = true; sig.CiT = Time[0]; sig.CiY = _pendingCiBuY; sig.CiX = _pendingCiBuX; }
+                if (dir == -1 && _pendingCiBe) { sig.Cisd = true; sig.CiT = Time[0]; sig.CiY = _pendingCiBeY; sig.CiX = _pendingCiBeX; }
             }
             // SMT annotation: correlated instrument failing to confirm the same extreme (divergence)
             if (!sig.Smt && IfvgShowSmt && smtBip >= 0 && CurrentBars[smtBip] >= 3)
@@ -1275,21 +1412,116 @@ namespace NinjaTrader.NinjaScript.Indicators
                 bool hitTgt = dir == 1 ? High[0] >= sig.TgL : Low[0] <= sig.TgL;
                 if (hitTgt) { sig.TgHit = true; if (AlertIfvg) FireAlert(sig.Tag + "Tgt", "IFVG TARGET HIT | " + SymTag() + " | " + TfTag(), Brushes.Gold); }
             }
-            if (invalidated || CurrentBar - sig.IvBar > 400) { sig.Gone = true; RemoveIfvgDraw(sig); return null; }
+            if (invalidated || CurrentBar - sig.IvBar > 400) { sig.Gone = true; FreezeIfvgTrace(sig, dir); RemoveIfvgDraw(sig); return null; }
             DrawIfvg(sig, dir);
             return sig;
         }
+        // Pine colours: bull IFVG #26C6DA (transp 65 -> opacity 35), bear IFVG #F23645 (transp 78 -> opacity 22),
+        // finished trace = same colour at transp 80 (opacity 20).
+        private static Brush MakeFrozenBrush(byte r, byte g, byte b)
+        {
+            var br = new SolidColorBrush(Color.FromRgb(r, g, b));
+            br.Freeze();
+            return br;
+        }
+        private static readonly Brush IvBullBrush = MakeFrozenBrush(0x26, 0xC6, 0xDA);
+        private static readonly Brush IvBearBrush = MakeFrozenBrush(0xF2, 0x36, 0x45);
+        private static readonly Brush IvTextGray = MakeFrozenBrush(0x9E, 0x9E, 0x9E);
+        private readonly List<string> ivTraceTags = new List<string>();
+        private const int IvTraceMax = 40;
+
+        // Live IFVG: box from the gap's oldest candle to the current bar (Pine: extends until it fails or hits its target).
+        // IvBar is an absolute bar index, so convert to bars-ago here.
+        private static readonly Brush LqBlueBrush = MakeFrozenBrush(0x29, 0x62, 0xFF);     // $$$ + CISD (bull side) — Pine #2962FF
+        private static readonly Brush TgOrangeBrush = MakeFrozenBrush(0xFF, 0x98, 0x00);   // 🎯 target — Pine #FF9800
+        private readonly List<string> ivHistTags = new List<string>();                     // sweep / CISD markers kept in history
+        private const int IvHistMax = 40;
+
         private void DrawIfvg(IctSig sig, int dir)
         {
-            Brush fill = dir == 1 ? Brushes.LimeGreen : Brushes.Red;
-            Draw.Rectangle(this, sig.Tag, false, sig.IvBar, sig.IvTop, 0, sig.IvBot, fill, fill, 35);
-            Draw.Text(this, sig.Tag + "Lb", false, sig.Cisd ? "IFVG + CISD" : sig.Smt ? "IFVG + SMT" : "IFVG", sig.IvBar, dir == 1 ? sig.IvBot : sig.IvTop, 0, fill, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
-            if (!double.IsNaN(sig.TgL))
-                Draw.Line(this, sig.Tag + "Tg", false, sig.IvBar, sig.TgL, 0, sig.TgL, Brushes.Gold, DashStyleHelper.Dash, 1);
+            Brush fill = dir == 1 ? IvBullBrush : IvBearBrush;
+            int leftAgo = Math.Max(1, CurrentBar - sig.IvBar + 1);
+            Draw.Rectangle(this, sig.Tag, false, leftAgo, sig.IvTop, 0, sig.IvBot, Brushes.Transparent, fill, dir == 1 ? 35 : 22);
+            string txt = sig.Cisd ? "IFVG + CISD" : sig.Smt ? "IFVG + SMT" : "IFVG";
+            if (sig.TgHit) txt += " 🎯";
+            Draw.Text(this, sig.Tag + "Lb", false, txt, leftAgo, dir == 1 ? sig.IvBot : sig.IvTop, 0, fill, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+            DrawIfvgMarks(sig, dir);
         }
+
+        // Sweep ($$$), CISD and target (🎯) markers. Sweep and CISD stay on the chart as history; the target line
+        // is removed with the IFVG, as in the source.
+        private void DrawIfvgMarks(IctSig sig, int dir)
+        {
+            string b = sig.Tag;
+            if (!double.IsNaN(sig.SwL) && sig.SwT != DateTime.MinValue)
+            {
+                int aFrom = GetBarsAgo(sig.SwT);
+                int aTo = sig.XTime == DateTime.MinValue ? 0 : GetBarsAgo(sig.XTime);
+                if (aTo > aFrom) { int tmp = aTo; aTo = aFrom; aFrom = tmp; }
+                Draw.Line(this, b + "Sw", false, aFrom, sig.SwL, aTo, sig.SwL, LqBlueBrush, DashStyleHelper.Solid, 1);
+                Draw.Text(this, b + "SwLb", false, sig.SwN, (aFrom + aTo) / 2, sig.SwL, 0, LqBlueBrush, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                TrackHistory(b);
+            }
+            if (sig.Cisd && sig.CiX != DateTime.MinValue && !double.IsNaN(sig.CiY))
+            {
+                Brush cc = dir == 1 ? LqBlueBrush : IvBearBrush;
+                int aFrom = GetBarsAgo(sig.CiX);
+                int aTo = Math.Max(0, GetBarsAgo(sig.CiT) - 4);
+                if (aTo > aFrom) { int tmp = aTo; aTo = aFrom; aFrom = tmp; }
+                Draw.Line(this, b + "Ci", false, aFrom, sig.CiY, aTo, sig.CiY, cc, DashStyleHelper.Solid, 1);
+                Draw.Text(this, b + "CiLb", false, "CISD", aTo, sig.CiY, 0, cc, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                TrackHistory(b);
+            }
+            if (!double.IsNaN(sig.TgL))
+            {
+                int aFrom = GetBarsAgo(sig.TgT);
+                int aTo = sig.TgHit ? Math.Max(0, CurrentBar - sig.Spawn - 4) : Math.Max(0, CurrentBar - sig.Spawn - 10);
+                if (aTo > aFrom) { int tmp = aTo; aTo = aFrom; aFrom = tmp; }
+                Draw.Line(this, b + "Tg", false, aFrom, sig.TgL, aTo, sig.TgL, TgOrangeBrush, DashStyleHelper.Dot, 1);
+                Draw.Text(this, b + "TgLb", false, "\U0001F3AF", aTo, sig.TgL, 0, TgOrangeBrush, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+        }
+
+        private void TrackHistory(string tag)
+        {
+            if (ivHistTags.Contains(tag)) return;
+            ivHistTags.Add(tag);
+            while (ivHistTags.Count > IvHistMax)
+            {
+                string old = ivHistTags[0];
+                ivHistTags.RemoveAt(0);
+                RemoveDrawObject(old + "Sw"); RemoveDrawObject(old + "SwLb");
+                RemoveDrawObject(old + "Ci"); RemoveDrawObject(old + "CiLb");
+            }
+        }
+
+        // Finished IFVG stays as a faded trace: gap origin -> inversion candle + 3, no border, dashed 50% line.
+        private void FreezeIfvgTrace(IctSig sig, int dir)
+        {
+            if (sig == null || double.IsNaN(sig.IvTop) || double.IsNaN(sig.IvBot)) return;
+            string tr = sig.Tag + "Tr";
+            int rightAgo = Math.Max(0, CurrentBar - sig.Spawn - 3);
+            int leftAgo = Math.Max(rightAgo + 1, CurrentBar - sig.IvBar + 1);
+            Brush fill = dir == 1 ? IvBullBrush : IvBearBrush;
+            double ce = (sig.IvTop + sig.IvBot) / 2.0;
+            Draw.Rectangle(this, tr, false, leftAgo, sig.IvTop, rightAgo, sig.IvBot, Brushes.Transparent, fill, 20);
+            Draw.Line(this, tr + "Ce", false, leftAgo, ce, rightAgo, ce, fill, DashStyleHelper.Dash, 1);
+            Draw.Text(this, tr + "Lb", false, "IFVG", rightAgo, sig.IvTop, 0, IvTextGray, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+            ivTraceTags.Add(tr);
+            while (ivTraceTags.Count > IvTraceMax)
+            {
+                string old = ivTraceTags[0];
+                ivTraceTags.RemoveAt(0);
+                RemoveDrawObject(old);
+                RemoveDrawObject(old + "Ce");
+                RemoveDrawObject(old + "Lb");
+            }
+        }
+
         private void RemoveIfvgDraw(IctSig sig)
         {
-            if (sig != null) { RemoveDrawObject(sig.Tag); RemoveDrawObject(sig.Tag + "Lb"); RemoveDrawObject(sig.Tag + "Tg"); nearArmed.Remove(sig.Tag); }
+            // $$$ and CISD markers stay as history (TrackHistory); the box, its label and the target line go
+            if (sig != null) { RemoveDrawObject(sig.Tag); RemoveDrawObject(sig.Tag + "Lb"); RemoveDrawObject(sig.Tag + "Tg"); RemoveDrawObject(sig.Tag + "TgLb"); nearArmed.Remove(sig.Tag); }
         }
 
         private void DrawBreakoutLines(BoState bo)
@@ -1301,6 +1533,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             Draw.Line(this, bo.Tag + "Lo", false, startBack, bo.SessLow, 0, bo.SessLow, Brushes.Black, DashStyleHelper.Solid, 2);
             Draw.Line(this, bo.Tag + "Mid", false, startBack, mid, 0, mid, Brushes.Red, DashStyleHelper.Solid, 2);
             Draw.Text(this, bo.Tag + "MidLb", false, "SL", 0, mid, 0, Brushes.Red, new SimpleFont("Arial", 10), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            // day name at the start of the range (Pine: str.format_time "EEE" on the session start)
+            Draw.Text(this, bo.Tag + "Day", false, bo.StartTime.ToString("ddd"), startBack, bo.SessHigh, 0, Brushes.Gray, new SimpleFont("Arial", 10), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
         }
     }
 }
