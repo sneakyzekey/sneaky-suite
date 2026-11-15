@@ -1259,14 +1259,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 Draw.Rectangle(this, "IctNdog", false, GetBarsAgo(ndT), ndTop, -10, ndBot, Brushes.SlateGray, Brushes.SlateGray, 18);
                 Draw.Line(this, "IctNdogCe", false, GetBarsAgo(ndT), (ndTop + ndBot) / 2.0, -10, (ndTop + ndBot) / 2.0, Brushes.SlateGray, DashStyleHelper.Dash, 1);
+                Draw.Text(this, "IctNdogLb", false, "NDOG", -10, ndTop, 0, Brushes.Black, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Right, Brushes.Transparent, Brushes.Transparent, 0);
             }
-            else { RemoveDrawObject("IctNdog"); RemoveDrawObject("IctNdogCe"); }
+            else { RemoveDrawObject("IctNdog"); RemoveDrawObject("IctNdogCe"); RemoveDrawObject("IctNdogLb"); }
             if (showNw)
             {
                 Draw.Rectangle(this, "IctNwog", false, GetBarsAgo(nwT), nwTop, -10, nwBot, Brushes.Purple, Brushes.Purple, 18);
                 Draw.Line(this, "IctNwogCe", false, GetBarsAgo(nwT), (nwTop + nwBot) / 2.0, -10, (nwTop + nwBot) / 2.0, Brushes.Purple, DashStyleHelper.Dash, 1);
+                Draw.Text(this, "IctNwogLb", false, "NWOG", -10, nwTop, 0, Brushes.Black, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Right, Brushes.Transparent, Brushes.Transparent, 0);
             }
-            else { RemoveDrawObject("IctNwog"); RemoveDrawObject("IctNwogCe"); }
+            else { RemoveDrawObject("IctNwog"); RemoveDrawObject("IctNwogCe"); RemoveDrawObject("IctNwogLb"); }
         }
 
         // ═══════════════════════════ PO3 ═══════════════════════════
@@ -1283,6 +1285,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             Draw.Line(this, "IctPo3Op", false, 0, po3O, -xm, po3O, Brushes.Goldenrod, DashStyleHelper.Solid, 1);
             Draw.Line(this, "IctPo3Wick", false, -xm, po3H, -xm, po3L, bodyBrush, DashStyleHelper.Solid, 1);
             Draw.Line(this, "IctPo3Body", false, -xm, po3O, -xm, Close[0] == po3O ? Close[0] + TickSize : Close[0], bodyBrush, DashStyleHelper.Solid, 8);
+            // small price tags at the right of the PO3 candle (Pine: H, C, O, L)
+            QueueLvl(po3H, Instrument.MasterInstrument.FormatPrice(po3H), PdTxtBrush);
+            QueueLvl(po3L, Instrument.MasterInstrument.FormatPrice(po3L), PdTxtBrush);
+            QueueLvl(po3O, Instrument.MasterInstrument.FormatPrice(po3O), Brushes.Goldenrod);
+            QueueLvl(Close[0], Instrument.MasterInstrument.FormatPrice(Close[0]), bodyBrush);
         }
 
         // ═══════════════════════════ 8 AM BREAKOUT ═══════════════════════════
