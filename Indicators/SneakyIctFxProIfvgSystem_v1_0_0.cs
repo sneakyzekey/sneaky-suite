@@ -418,6 +418,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             UpdatePremiumDiscountHtfTable();
             UpdatePo3();
             UpdateBreakoutSessions();
+            FlushLvlLabels();
 
             prevIsBu = isBu; prevIsBe = isBe;
         }
@@ -669,12 +670,45 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (sw && AlertSessionSwept && sesDayTSet && lvlT >= sesDayT)
                 FireAlert(tag.Replace(" ", "") + "Swept", (isHigh ? "\U0001F534 " : "\U0001F7E2 ") + tag + " SWEPT | " + SymTag() + " | " + TfTag(), isHigh ? Brushes.Red : Brushes.LimeGreen);
         }
+        // ── level labels: collected each bar, then drawn merged when they sit at the same price (Pine "clean chart") ──
+        private struct LvlLabel { public double Price; public string Text; public Brush Col; }
+        private readonly List<LvlLabel> lvlQ = new List<LvlLabel>();
+        private int lvlPrevCount;
+        private const int LvlMaxLabels = 60;
+        private void QueueLvl(double price, string text, Brush col)
+        {
+            if (double.IsNaN(price) || string.IsNullOrEmpty(text)) return;
+            lvlQ.Add(new LvlLabel { Price = price, Text = text, Col = col });
+        }
+        private void FlushLvlLabels()
+        {
+            // highest price first; OrderByDescending is stable, so same-price items keep their call order
+            var sorted = lvlQ.OrderByDescending(x => x.Price).ToList();
+            double tol = TickSize * 4;   // labels within 4 ticks are one label
+            var groups = new List<List<LvlLabel>>();
+            foreach (var it in sorted)
+            {
+                if (groups.Count > 0 && Math.Abs(groups[groups.Count - 1][0].Price - it.Price) <= tol) groups[groups.Count - 1].Add(it);
+                else groups.Add(new List<LvlLabel> { it });
+            }
+            int k = 0;
+            foreach (var g in groups)
+            {
+                if (k >= LvlMaxLabels) break;
+                string txt = string.Join(" + ", g.Select(x => x.Text));
+                Draw.Text(this, "IctLvl" + k, false, txt, -7, g[0].Price, 0, g[0].Col, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                k++;
+            }
+            for (int i = k; i < lvlPrevCount; i++) RemoveDrawObject("IctLvl" + i);
+            lvlPrevCount = k;
+            lvlQ.Clear();
+        }
+
         private void DrawSessionLine(string tag, bool on, double lvl, DateTime t0, bool taken, string label, Brush col)
         {
-            if (!on || double.IsNaN(lvl) || !sesDayTSet || t0 < sesDayT) { RemoveDrawObject(tag); return; }
-            int tEndBarsBack = KeyLevelsShort ? -6 : 0;
+            if (!on || double.IsNaN(lvl) || !sesDayTSet || t0 < sesDayT) { RemoveDrawObject(tag); RemoveDrawObject(tag + "Lb"); return; }
             Draw.Line(this, tag, false, GetBarsAgo(t0), lvl, KeyLevelsShort ? -6 : -70, lvl, col, DashStyleHelper.Dash, 1);
-            Draw.Text(this, tag + "Lb", false, label + (taken ? " ✓" : ""), tEndBarsBack - 1, lvl, 0, col, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+            QueueLvl(lvl, label + (taken ? " ✓" : ""), col);
         }
         private void UpdateOpen(int nyMin, int target, ref double o, ref DateTime t)
         {
@@ -684,17 +718,17 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int lastNyMin = 9999; private bool lastNyMinValid;
         private void DrawOpenLine(string tag, bool on, double lvl, DateTime t0, string label, Brush col)
         {
-            if (!on || double.IsNaN(lvl)) { RemoveDrawObject(tag); return; }
+            if (!on || double.IsNaN(lvl)) { RemoveDrawObject(tag); RemoveDrawObject(tag + "Lb"); return; }
             Draw.Line(this, tag, false, GetBarsAgo(t0), lvl, KeyLevelsShort ? -6 : -70, lvl, col, DashStyleHelper.Solid, 1);
-            Draw.Text(this, tag + "Lb", false, label, (KeyLevelsShort ? -6 : -70) - 1, lvl, 0, col, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+            QueueLvl(lvl, label, col);
         }
         private void DrawKeyLevelLine(string tag, bool on, double lvl, string label, Brush col, DashStyleHelper dash)
         {
             bool show = on && !double.IsNaN(lvl) && IsNear(lvl, lvl);
-            if (!show) { RemoveDrawObject(tag); return; }
+            if (!show) { RemoveDrawObject(tag); RemoveDrawObject(tag + "Lb"); return; }
             int endBack = KeyLevelsShort ? -6 : 0;
-            Draw.Line(this, tag, false, KeyLevelsShort ? 11 : Math.Min(CurrentBar, 4900), lvl, endBack, lvl, col, dash, 1);
-            Draw.Text(this, tag + "Lb", false, label, endBack - 1, lvl, 0, col, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+            Draw.Line(this, tag, false, KeyLevelsShort ? 11 : Math.Min(CurrentBar, 4900), lvl, endBack, lvl, PdTxtBrush, dash, 1);
+            QueueLvl(lvl, label, PdTxtBrush);
         }
         private bool IsNear(double top, double bot) { return ShowAll || (!double.IsNaN(top) && !double.IsNaN(bot) && Close[0] >= bot - NEARD && Close[0] <= top + NEARD); }
         private int GetBarsAgo(DateTime t)
@@ -784,8 +818,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void DrawLiquidityLine(string tag, LqPool p, bool isHigh)
         {
             string name = (isHigh ? "BSL" : "SSL");
-            Draw.Line(this, tag, false, GetBarsAgo(p.T), p.Lvl, 0, p.Lvl, Brushes.Black, DashStyleHelper.Dot, p.N >= 2 ? 2 : 1);
-            Draw.Text(this, tag + "Lb", false, name, -1, p.Lvl, 0, Brushes.Black, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+            Draw.Line(this, tag, false, GetBarsAgo(p.T), p.Lvl, 0, p.Lvl, PdTxtBrush, DashStyleHelper.Dot, p.N >= 2 ? 2 : 1);
+            QueueLvl(p.Lvl, name, PdTxtBrush);
         }
         private void FireLiquiditySweepAlert(bool isHigh, double lvl)
         {
@@ -859,7 +893,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     b.Dir = -hd; b.Inv = true; b.Hit = false; b.Born = CurrentBar;
                 }
-                if (kill) { RemoveDrawObject(b.Tag); RemoveDrawObject(b.Tag + "Lb"); hfBoxes.RemoveAt(i); continue; }
+                if (kill) { RemoveDrawObject(b.Tag); RemoveDrawObject(b.Tag + "T"); RemoveDrawObject(b.Tag + "Lb"); hfBoxes.RemoveAt(i); continue; }
 
                 // premium/discount gate for this box's own timeframe range, used by HfPremiumDiscountOnly
                 b.PdOk = ComputeHfPdOk(b);
@@ -868,12 +902,19 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (HfPremiumDiscountOnly && !b.PdOk) visible = false;
                 if (visible)
                 {
-                    // Pine: FVG bull #26A69A (transp 75) / bear black (transp 72); IFVG bull #2962FF / bear #F23645 (transp 80)
-                    Brush fill = b.Inv ? (b.Dir == 1 ? SesLdnBrush : SesNyBrush) : (b.Dir == 1 ? HfBullBrush : Brushes.Black);
-                    Draw.Rectangle(this, b.Tag, false, HfShort ? 8 : CurrentBar, b.Top, HfShort ? -8 : 0, b.Bot, fill, fill, b.Inv ? 20 : 25);
-                    Draw.Text(this, b.Tag + "Lb", false, (b.Dir == 1 ? "BULL " : "BEAR ") + (b.Inv ? "IFVG " : "") + NameOf(GetSlotTf(b.Slot)), HfShort ? -9 : -1, b.Top, 0, Brushes.Black, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                    // TradingView look: the gap is a dashed stub at the edge price reached first (bull: its top,
+                    // bear: its bottom), a solid tick spanning the whole gap, and the label to the right.
+                    // Colours follow the current direction: bull teal #26A69A, bear red #F23645.
+                    Brush stub = b.Dir == 1 ? HfBullBrush : IvBearBrush;
+                    double edge = b.Dir == 1 ? b.Top : b.Bot;
+                    int halfW = HfShort ? 8 : 0;
+                    int leftAgo = HfShort ? halfW : Math.Max(1, CurrentBar - b.Born);
+                    Draw.Line(this, b.Tag, false, leftAgo, edge, -halfW, edge, stub, DashStyleHelper.Dash, 1);
+                    Draw.Line(this, b.Tag + "T", false, 0, b.Top, 0, b.Bot, stub, DashStyleHelper.Solid, 1);
+                    string hfLabel = (b.Dir == 1 ? "BULL " : "BEAR ") + (b.Inv ? "IFVG " : "FVG ") + NameOf(GetSlotTf(b.Slot));
+                    QueueLvl(edge, hfLabel, stub);
                 }
-                else { RemoveDrawObject(b.Tag); RemoveDrawObject(b.Tag + "Lb"); }
+                else { RemoveDrawObject(b.Tag); RemoveDrawObject(b.Tag + "T"); RemoveDrawObject(b.Tag + "Lb"); }
             }
         }
         private void AddHfBox(double top, double bot, int dir, int slot, int sec)
@@ -882,7 +923,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             hfBoxSeq++;
             hfBoxes.Add(new HfBox { Top = top, Bot = bot, Dir = dir, Slot = slot, SecSize = sec, Born = CurrentBar, Tag = "IctHf" + hfBoxSeq });
             int cnt = 0; for (int i = 0; i < hfBoxes.Count; i++) if (hfBoxes[i].Slot == slot) cnt++;
-            if (cnt > 40) { for (int i = 0; i < hfBoxes.Count; i++) if (hfBoxes[i].Slot == slot) { RemoveDrawObject(hfBoxes[i].Tag); RemoveDrawObject(hfBoxes[i].Tag + "Lb"); hfBoxes.RemoveAt(i); break; } }
+            if (cnt > 40) { for (int i = 0; i < hfBoxes.Count; i++) if (hfBoxes[i].Slot == slot) { RemoveDrawObject(hfBoxes[i].Tag); RemoveDrawObject(hfBoxes[i].Tag + "T"); RemoveDrawObject(hfBoxes[i].Tag + "Lb"); hfBoxes.RemoveAt(i); break; } }
         }
         private bool ComputeHfPdOk(HfBox b)
         {
@@ -996,6 +1037,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
         // session + open colours from the Pine inputs (sesAsCol / sesLoCol / sesNyCol / KL_MID / KL_830 / KL_930)
         private static readonly Brush HfBullBrush = MakeFrozenBrush(0x26, 0xA6, 0x9A);
+        private static readonly Brush SmtBuBrush = MakeFrozenBrush(0x4C, 0xAF, 0x50);
         private static readonly Brush SesAsBrush = MakeFrozenBrush(0xF5, 0xA8, 0x00);
         private static readonly Brush SesLdnBrush = MakeFrozenBrush(0x29, 0x62, 0xFF);
         private static readonly Brush SesNyBrush = MakeFrozenBrush(0xF2, 0x36, 0x45);
@@ -1472,6 +1514,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Draw.Text(this, b + "CiLb", false, "CISD", aTo, sig.CiY, 0, cc, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
                 TrackHistory(b);
             }
+            // SMT: correlated market failed to confirm the extreme — line from the swept swing to the extreme (Pine: width 2, #4CAF50 / #F23645)
+            if (sig.Smt && !double.IsNaN(sig.SwL) && sig.SwT != DateTime.MinValue && sig.XTime != DateTime.MinValue)
+            {
+                int aX = GetBarsAgo(sig.XTime);
+                int aS = GetBarsAgo(sig.SwT);
+                double ex = dir == 1 ? Low[aX] : High[aX];
+                Brush sm = dir == 1 ? SmtBuBrush : IvBearBrush;
+                Draw.Line(this, b + "Smt", false, aS, sig.SwL, aX, ex, sm, DashStyleHelper.Solid, 2);
+                Draw.Text(this, b + "SmtLb", false, "SMT", (aS + aX) / 2, (sig.SwL + ex) / 2, 0, sm, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                TrackHistory(b);
+            }
             if (!double.IsNaN(sig.TgL))
             {
                 int aFrom = GetBarsAgo(sig.TgT);
@@ -1492,6 +1545,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ivHistTags.RemoveAt(0);
                 RemoveDrawObject(old + "Sw"); RemoveDrawObject(old + "SwLb");
                 RemoveDrawObject(old + "Ci"); RemoveDrawObject(old + "CiLb");
+                RemoveDrawObject(old + "Smt"); RemoveDrawObject(old + "SmtLb");
             }
         }
 
