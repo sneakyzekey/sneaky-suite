@@ -200,6 +200,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 DreRampPctOfVa = 25; DreAlignBoost = 0.35;
 
                 AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, "(internal — plots unused, drawing-tool based)");
+                // trade-signal plots for SneakyTradeHUD AUTO TRADE: +1 long, -1 short, 0 none
+                foreach (string sn in new[] { "SigRotation", "SigFailedBreakout", "SigAcceptance", "SigNakedPoc", "SigIbBreak", "SigIbBreakWide", "SigIbBreakNarrow", "SigStop", "SigTarget" })
+                    AddPlot(new Stroke(Brushes.Transparent, 1), PlotStyle.Line, sn);
+                SignalsOn = true; SigRthStart = 930; SigRthEnd = 1600; SigShowMarkers = true; SigShowLevels = true;
             }
             else if (State == State.Configure)
             {
@@ -280,6 +284,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // the first tick of the NEXT bar -- and that has to happen BEFORE the session
                 // check below, so a session's closing bar stays in its own session.
                 bool wholeBars = State == State.Historical && !Bars.IsTickReplay;
+                if (SignalsOn)
+                {
+                    if (wholeBars) RunSignals(0, Bars.IsFirstBarOfSession);
+                    else if (isNewBarTick)
+                    {
+                        if (CurrentBar >= 1) RunSignals(1, _sgPendingFirst);
+                        _sgPendingFirst = Bars.IsFirstBarOfSession;
+                    }
+                }
                 if (!wholeBars && isNewBarTick && CurrentBar >= 1 && _cur != null && InSession(Time[1]))
                     FoldBar(1);
 
@@ -1096,6 +1109,211 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!double.IsNaN(_devPocPx)) { _lastDevPoc = _devPocPx; _lastDevVah = _devVahPx; _lastDevVal = _devValPx; }
         }
 
+
+        // ═══════════════════════════ TRADE SIGNALS (plots for SneakyTradeHUD AUTO TRADE) ═══════════════════════════
+        // Not part of the TradingView original: an added layer that turns five textbook profile setups into
+        // +1 (long) / -1 (short) plots. Rules are the ones backtested in Python on exported NQ 1-minute data
+        // (88 trading days, 11 Jun - 16 Oct 2026). RESULT OF THAT TEST - none showed a reliable edge:
+        //   SigRotation        106 trades, PF 0.95     SigNakedPoc     13 trades, PF 2.23 (too few to trust)
+        //   SigFailedBreakout   61 trades, PF 1.01     SigIbBreak      78 trades, PF 0.74
+        //   SigAcceptance       81 trades, PF 1.03     SigIbBreakNarrow 40 trades, PF 0.37 / Wide 29 trades, PF 1.24
+        // Rules (regular hours only, one signal per setup per side per day, none in the last 30 minutes):
+        //   Rotation        after the first hour a bar touches the developing value-area edge and closes back inside;
+        //                   target developing POC, stop 2 points beyond the bar
+        //   Failed breakout a close outside the PRIOR session's value area, then a close back inside; target prior
+        //                   POC, stop 2 points beyond the excursion
+        //   Acceptance      15 straight closes outside the prior value area; with it, stop just inside the edge, target 2R
+        //   Naked POC       first regular-hours bar: toward the nearest untouched prior POC 0.15-0.75 of a typical
+        //                   day's range away; equal-distance stop
+        //   IB break        first close outside the first regular-hours hour; stop IB midpoint, target one IB range
+        // The engine keeps its own whole-bar profile (same maths as the main one) so the signals are identical on
+        // historical and live bars and match the backtest. Built for a 1-MINUTE chart. SigStop / SigTarget carry the
+        // latest signal's own stop and target price; SneakyTradeHUD enters with its own tick distances instead.
+        private const int SigP0 = 1;   // plot 0 is the internal placeholder; signal plots are 1..9
+        private Dictionary<int, double> _sgVol = new Dictionary<int, double>();
+        private double _sgHi = double.NaN, _sgLo = double.NaN, _sgPreHi = double.NaN, _sgPreLo = double.NaN;
+        private bool _sgHavePrev; private double _sgPPoc, _sgPVah, _sgPVal;
+        private readonly List<double> _sgNaked = new List<double>(), _sgDayRanges = new List<double>(), _sgIbHist = new List<double>();
+        private bool _sgRthSeen, _sg1L, _sg1S, _sg2Up, _sg2Dn, _sg3, _sg5, _sgPendingFirst;
+        private int _sgOut, _sgRun, _sgRunSide, _sgSeq, _sgLastBar = -1; private double _sgExt;
+        private double _sgIbH = double.NaN, _sgIbL = double.NaN, _sgStop, _sgTarget;
+
+        private int SgBin(double px) { return (int)Math.Floor(px / (TickSize * BinTicks) + 0.5); }
+        private bool SgAnalyse(out double poc, out double vah, out double val)
+        {
+            poc = vah = val = double.NaN;
+            if (_sgVol.Count == 0) return false;
+            double binPx = TickSize * BinTicks;
+            int f = _sgVol.Keys.Min(), l = _sgVol.Keys.Max(), n = l - f + 1;
+            double[] vs = new double[n]; double tot = 0, pocV = -1; int pi = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double v; _sgVol.TryGetValue(f + i, out v); vs[i] = v; tot += v;
+                if (v > pocV) { pocV = v; pi = i; }
+            }
+            double target = tot * ValueAreaPct / 100.0, acc = pocV; int lo = pi, hi = pi;
+            while (acc < target && (lo > 0 || hi < n - 1))
+            {
+                double below = lo > 0 ? vs[lo - 1] : -1.0, above = hi < n - 1 ? vs[hi + 1] : -1.0;
+                if (above >= below) { hi++; acc += above; } else { lo--; acc += below; }
+            }
+            poc = (f + pi) * binPx; vah = (f + hi) * binPx + binPx / 2; val = (f + lo) * binPx - binPx / 2;
+            return true;
+        }
+        private static double SgMedian(List<double> xs, int last)
+        {
+            var s = xs.Skip(Math.Max(0, xs.Count - last)).OrderBy(x => x).ToList();
+            return s.Count == 0 ? double.NaN : (s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2.0);
+        }
+        private bool SgFire(int a, int plot, int side, double stop, double target, string name)
+        {
+            double entry = Close[a];
+            if (Math.Abs(entry - stop) <= 0 || (target - entry) * side <= 0) return false;   // same validity test as the backtest
+            Values[SigP0 + plot][a] = side;
+            _sgStop = stop; _sgTarget = target;
+            Values[SigP0 + 7][a] = stop; Values[SigP0 + 8][a] = target;
+            _sgSeq++;
+            Brush c = side > 0 ? Brushes.LimeGreen : Brushes.OrangeRed;
+            if (SigShowMarkers)
+            {
+                double y = side > 0 ? Low[a] - 4 * TickSize : High[a] + 4 * TickSize;
+                if (side > 0) Draw.ArrowUp(this, "SVPsigA" + _sgSeq, false, Time[a], y, c);
+                else Draw.ArrowDown(this, "SVPsigA" + _sgSeq, false, Time[a], y, c);
+                Draw.Text(this, "SVPsigT" + _sgSeq, false, name, Time[a], y, side > 0 ? -22 : 22, c,
+                    new SimpleFont("Segoe UI", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            if (SigShowLevels)
+            {
+                DateTime x1 = Time[a].AddMinutes(15);
+                Draw.Line(this, "SVPsigS" + _sgSeq, false, Time[a], stop, x1, stop, Brushes.OrangeRed, DashStyleHelper.Dash, 1);
+                Draw.Line(this, "SVPsigG" + _sgSeq, false, Time[a], target, x1, target, Brushes.LimeGreen, DashStyleHelper.Dash, 1);
+            }
+            return true;
+        }
+
+        // Processes one FINISHED bar (a = bars ago), exactly once.
+        private void RunSignals(int a, bool firstOfSession)
+        {
+            int idx = CurrentBar - a;
+            if (idx <= _sgLastBar) return;
+            _sgLastBar = idx;
+            for (int p = 0; p < 7; p++) Values[SigP0 + p][a] = 0;
+            Values[SigP0 + 7][a] = _sgStop; Values[SigP0 + 8][a] = _sgTarget;
+
+            if (firstOfSession)
+            {
+                double poc, vah, val;
+                if (!double.IsNaN(_sgHi) && SgAnalyse(out poc, out vah, out val))
+                {
+                    double sLo = _sgLo, sHi = _sgHi;
+                    _sgNaked.RemoveAll(p => sLo <= p && p <= sHi);   // touched this session -> no longer naked
+                    _sgPPoc = poc; _sgPVah = vah; _sgPVal = val; _sgHavePrev = true;
+                    _sgNaked.Add(poc); while (_sgNaked.Count > 10) _sgNaked.RemoveAt(0);
+                    _sgDayRanges.Add(_sgHi - _sgLo);
+                    if (!double.IsNaN(_sgIbH)) _sgIbHist.Add(_sgIbH - _sgIbL);
+                }
+                _sgVol.Clear();
+                _sgHi = _sgLo = _sgPreHi = _sgPreLo = double.NaN;
+                _sgRthSeen = _sg1L = _sg1S = _sg2Up = _sg2Dn = _sg3 = _sg5 = false;
+                _sgOut = 0; _sgRun = 0; _sgRunSide = 0; _sgExt = double.NaN; _sgIbH = _sgIbL = double.NaN;
+            }
+
+            DateTime st = BarsPeriod.BarsPeriodType == BarsPeriodType.Minute ? Time[a].AddMinutes(-BarsPeriod.Value) : Time[a];
+            int m = st.Hour * 60 + st.Minute;
+            int rth0 = SigRthStart / 100 * 60 + SigRthStart % 100, rth1 = SigRthEnd / 100 * 60 + SigRthEnd % 100;
+            bool inRth = m >= rth0 && m < rth1, roomLeft = m < rth1 - 30;
+            double c = Close[a], hi = High[a], lo = Low[a];
+
+            if (inRth)
+            {
+                if (!_sgRthSeen)
+                {
+                    _sgRthSeen = true;
+                    double rng = _sgDayRanges.Count >= 5 ? SgMedian(_sgDayRanges, 20) : double.NaN;
+                    if (!double.IsNaN(rng))
+                    {
+                        double best = double.NaN;
+                        foreach (double p in _sgNaked)
+                        {
+                            double dist = Math.Abs(p - c);
+                            bool touchedOvernight = !double.IsNaN(_sgPreLo) && _sgPreLo <= p && p <= _sgPreHi;
+                            if (dist < 0.15 * rng || dist > 0.75 * rng || touchedOvernight) continue;
+                            if (double.IsNaN(best) || dist < Math.Abs(best - c)) best = p;
+                        }
+                        if (!double.IsNaN(best))
+                        {
+                            int side = best > c ? 1 : -1;
+                            SgFire(a, 3, side, c - side * Math.Abs(best - c), best, "Naked POC");
+                        }
+                    }
+                }
+
+                if (m < rth0 + 60)
+                {
+                    _sgIbH = double.IsNaN(_sgIbH) ? hi : Math.Max(_sgIbH, hi);
+                    _sgIbL = double.IsNaN(_sgIbL) ? lo : Math.Min(_sgIbL, lo);
+                }
+                else if (roomLeft)
+                {
+                    double poc, vah, val;   // developing profile through the PREVIOUS bar
+                    if (SgAnalyse(out poc, out vah, out val))
+                    {
+                        if (!_sg1L && lo <= val && c > val && poc - c > 2) { SgFire(a, 0, 1, lo - 2, poc, "Rotation"); _sg1L = true; }
+                        if (!_sg1S && hi >= vah && c < vah && c - poc > 2) { SgFire(a, 0, -1, hi + 2, poc, "Rotation"); _sg1S = true; }
+                    }
+                    if (!_sg5 && !double.IsNaN(_sgIbH))
+                    {
+                        int side = c > _sgIbH ? 1 : c < _sgIbL ? -1 : 0;
+                        if (side != 0)
+                        {
+                            _sg5 = true;
+                            double ibr = _sgIbH - _sgIbL;
+                            if (SgFire(a, 4, side, (_sgIbH + _sgIbL) / 2.0, c + side * ibr, "IB break") && _sgIbHist.Count >= 10)
+                                Values[SigP0 + (ibr < SgMedian(_sgIbHist, 20) ? 6 : 5)][a] = side;
+                        }
+                    }
+                }
+
+                if (_sgHavePrev && roomLeft)
+                {
+                    int pos = c > _sgPVah ? 1 : c < _sgPVal ? -1 : 0;
+                    if (_sgOut != 0 && pos == 0)
+                    {
+                        if (_sgOut > 0 && !_sg2Up) { SgFire(a, 1, -1, _sgExt + 2, _sgPPoc, "Failed breakout"); _sg2Up = true; }
+                        if (_sgOut < 0 && !_sg2Dn) { SgFire(a, 1, 1, _sgExt - 2, _sgPPoc, "Failed breakout"); _sg2Dn = true; }
+                    }
+                    if (pos != 0)
+                        _sgExt = _sgOut != pos ? (pos > 0 ? hi : lo) : (pos > 0 ? Math.Max(_sgExt, hi) : Math.Min(_sgExt, lo));
+                    _sgOut = pos;
+
+                    _sgRun = (pos != 0 && pos == _sgRunSide) ? _sgRun + 1 : (pos != 0 ? 1 : 0);
+                    _sgRunSide = pos;
+                    if (_sgRun == 15 && !_sg3)
+                    {
+                        _sg3 = true;
+                        double edge = pos > 0 ? _sgPVah : _sgPVal, w = _sgPVah - _sgPVal;
+                        double stop = edge - pos * Math.Max(10, 0.1 * w), risk = Math.Abs(c - stop);
+                        SgFire(a, 2, pos, stop, c + pos * 2 * risk, "Acceptance");
+                    }
+                }
+            }
+            else if (!_sgRthSeen)
+            {
+                _sgPreHi = double.IsNaN(_sgPreHi) ? hi : Math.Max(_sgPreHi, hi);
+                _sgPreLo = double.IsNaN(_sgPreLo) ? lo : Math.Min(_sgPreLo, lo);
+            }
+
+            // the bar joins the engine's profile only after its signals were read
+            if (Volume[a] > 0)
+            {
+                int k0 = SgBin(lo), k1 = SgBin(hi), nb = Math.Max(1, Math.Min(400, k1 - k0 + 1));
+                double share = Volume[a] / nb;
+                for (int k = k0; k < k0 + nb; k++) { double cur; _sgVol.TryGetValue(k, out cur); _sgVol[k] = cur + share; }
+            }
+            _sgHi = double.IsNaN(_sgHi) ? hi : Math.Max(_sgHi, hi);
+            _sgLo = double.IsNaN(_sgLo) ? lo : Math.Min(_sgLo, lo);
+        }
+
         #region Properties
         // -- 0. master switches --
         [NinjaScriptProperty] [Display(Name = "EVERYTHING ON", GroupName = "0. Master switches", Order = 0)] public bool MasterAll { get; set; }
@@ -1192,6 +1410,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty] [Range(1, 50)] [Display(Name = "DRE migration: candles back", GroupName = "9b. DRE engine", Order = 6)] public int DreMigrationCandlesBack { get; set; }
         [NinjaScriptProperty] [Range(5, 75)] [Display(Name = "DRE ramp width (% of value area)", GroupName = "9b. DRE engine", Order = 7)] public double DreRampPctOfVa { get; set; }
         [NinjaScriptProperty] [Range(0.0, 0.6)] [Display(Name = "DRE align boost", GroupName = "9b. DRE engine", Order = 8)] public double DreAlignBoost { get; set; }
+
+        // 10 — trade signals (added layer, not in the TradingView original)
+        [NinjaScriptProperty] [Display(Name = "Trade signals on", Description = "Publishes the Sig* plots (+1 long / -1 short) for SneakyTradeHUD AUTO TRADE. Built for a 1-minute chart.", GroupName = "10. Trade signals", Order = 0)] public bool SignalsOn { get; set; }
+        [NinjaScriptProperty] [Range(0, 2359)] [Display(Name = "Regular hours start (HHmm, chart time)", GroupName = "10. Trade signals", Order = 1)] public int SigRthStart { get; set; }
+        [NinjaScriptProperty] [Range(0, 2359)] [Display(Name = "Regular hours end (HHmm, chart time)", GroupName = "10. Trade signals", Order = 2)] public int SigRthEnd { get; set; }
+        [NinjaScriptProperty] [Display(Name = "Show signal arrows and names", GroupName = "10. Trade signals", Order = 3)] public bool SigShowMarkers { get; set; }
+        [NinjaScriptProperty] [Display(Name = "Show each signal's stop and target", GroupName = "10. Trade signals", Order = 4)] public bool SigShowLevels { get; set; }
         #endregion
     }
 }
