@@ -1,10 +1,10 @@
 # Sneaky Suite — Full Reference
 
-Full description and entry/signal/trigger logic for every file in this repo (165 total: 124 Indicators, 20 Strategies, 21 AddOns), organized by folder and sorted alphabetically within each. This supplements the short-form tables in the main [README](README.md).
+Full description and entry/signal/trigger logic for every file in this repo (169 total: 127 Indicators, 21 Strategies, 21 AddOns), organized by folder and sorted alphabetically within each. This supplements the short-form tables in the main [README](README.md).
 
 ---
 
-## Indicators (124)
+## Indicators (127)
 
 ## GexContextScore.cs
 **Description:** Reads a CSV from the companion `fetch_gex_nq.py` script and converts GEX wall position, gamma flip, gamma zone, DEX magnets, skew/term structure and 0DTE pin into a single directional context score from -100 to +100, with VIX-based blocking/attenuating filters.
@@ -230,6 +230,10 @@ Full description and entry/signal/trigger logic for every file in this repo (165
 **Description:** Sneaky smoother library — Holt double-exponential smoothing (clean-room, level + trend components), plotting the smoothed level.
 **Signal logic:** Plots a double-exponentially smoothed level line; no discrete signal — used as a trend/smoothing reference.
 
+## SneakyIctFxProIfvgSystem_v1_0_0.cs
+**Description:** NinjaTrader 8 port of TradingView's "ICT FX PRO IFVG SYSTEM V 6.0" by ICTFX_PRO (open-source, MPL-2.0). One overlay covering inverse fair value gaps, run-based CISD, a 5-slot higher-timeframe FVG/IFVG system, sessions and key levels (Asia/London/NY, prior day/week/month, opens), liquidity pools, NDOG/NWOG opening gaps, a Premium & Discount dealing range with a W/D/4H/1H bias table, the PO3 daily projection and two configurable "8 AM breakout" sessions. The file header lists every place the port omits dead Pine code or simplifies an engine (the Premium & Discount quality scoring and the IFVG bookkeeping are simplified). Not yet compiled or run in NinjaTrader at the time of writing.
+**Signal logic:** Alerts and drawings only, no orders. An IFVG signal is created when the CISD engine confirms a shift and a recent 3-bar fair value gap has been closed back through (bullish: a bearish gap price closes above; bearish: the mirror), optionally filtered by a recent liquidity sweep, an available liquidity target, and the dealing range / premium-discount side. Other alerts: liquidity sweeps, session high/low sweeps, price near or through key levels, HTF FVG touches and inversions, entering premium or discount, and a close beyond a frozen breakout-session range.
+
 ## SneakyIctMarketStructure.cs
 **Description:** Port of Zeiierman's ICT market-structure indicator: detects Change of Character (CHoCH), Shift in Market Structure (SMS) and Break in Market Structure (BMS) events, with premium/discount zone context and a multi-symbol screener.
 **Signal logic:** The first structural reversal in a new direction is tagged CHoCH; if the prior extreme had held unchanged for a configurable "Response" period, the next new high/low in that direction is tagged SMS, and each further one after that is tagged BMS. Each event carries a bull/bear flag (Bull = true for a bullish shift, false for bearish) and is plotted/labelled (StructurePos: +1 CHoCH / +2 SMS / +3+ BMS, negative for bearish) plus optional alert notifications; premium/discount context flags whether price sits above or below the midpoint of the current structural range.
@@ -363,6 +367,10 @@ Full description and entry/signal/trigger logic for every file in this repo (165
 **Description:** A Bollinger-Bands-inside-Keltner-Channels "squeeze" detector: flags a squeeze whenever the Bollinger band width is narrower than the Keltner channel width, counts how many consecutive bars the squeeze lasts, and plots a TTM-Squeeze-style linear-regression momentum histogram. The author notes 193 fires tested on 5-minute NQ showed no measurable edge; treated as a context/analysis tool, not a standalone entry signal.
 **Signal logic:** FireSignal fires +1 (bullish) or -1 (bearish) on the first bar after a squeeze releases (Bollinger band width expands back outside the Keltner channel), sign taken from the momentum histogram's value at release, provided the squeeze lasted at least MinBars.
 
+## SneakySqueezeEngineProCc_v1_0_0.cs
+**Description:** NinjaTrader 8 port of TradingView's "Squeeze Engine PRO [CandleChasers]" by CandleChasers (open-source Pine v6; momentum code credited to LazyBear). A squeeze oscillator with multi-level Bollinger/Keltner compression detection, linear-regression momentum, an optional higher-timeframe trend filter, hand-rolled ADX/DMI, a confluence score, pivot divergences and a dashboard. Not yet compiled or run in NinjaTrader at the time of writing.
+**Signal logic:** Tracks a virtual trade lifecycle (STANDBY, CHARGING, ARMED, IN TRADE, COOLDOWN) for display and alerts only; it places no orders. A BUY/SELL marker fires when a squeeze releases with momentum in that direction and the enabled filters agree (higher-timeframe trend, ADX strength, confluence score, impulse gating); the virtual trade then shows an entry, stop and target and ends on target, stop or momentum exit. Presets for trade style and signal mode shift the thresholds.
+
 ## SneakyStochasticTripleFilter_v1_0_0.cs
 **Description:** Port of "Stochastic Triple Filter [ATP]" — a Stochastic %K/%D crossover gated by a DonovanWall multi-pole Gaussian-channel midline slope (trend agreement) and a Choppiness Index (regime filter), publishing SneakyCore.StfState so the Council gains both a trend voter and an independent chop veto.
 **Signal logic:** A long signal fires when %K crosses above %D while %K is in the oversold zone, the Gaussian-channel midline is rising (if the GC filter is enabled), and the Choppiness Index indicates a trending (non-choppy) market (if the chop filter is enabled); a short signal mirrors this with %K crossing below %D in the overbought zone, midline falling, and trending regime. The raw Gaussian-slope bias and Choppiness trending flag are always published to the Council regardless of these per-sensor toggles, so the Council's own filter stays in control.
@@ -370,6 +378,17 @@ Full description and entry/signal/trigger logic for every file in this repo (165
 ## SneakyStructure_v1_0_0.cs
 **Description:** Clean-room self-contained market-structure axis: detects fractal swing-high/low pivots, classifies them as Higher-High/Higher-Low/Lower-High/Lower-Low versus the prior confirmed swing of the same kind, and tracks break-of-structure events. Publishes SneakyCore.StructureState and is wired into the Council as a market-structure voter.
 **Signal logic:** Bias is +1 for an up-structure (HH and HL both confirmed), -1 for a down-structure (LH and LL both confirmed), 0 for mixed/unknown. Bos is a one-shot ±1 pulse: +1 when Close closes above the last confirmed swing-high (break of structure to the upside), -1 when Close closes below the last confirmed swing-low — each latches until the opposing level is subsequently taken out.
+
+## SneakyStrykSvp_v1_0_0.cs
+**Description:** NinjaTrader 8 port of TradingView's "STRYK: SVP" v3.3 by Es-Sniper (open-source Pine v6). Session volume profile drawn as a heatmap or bars behind the candles, with naked/tested POC lines, value area, a developing-session profile, initial balance, nine candle-colouring engines and a rendered dashboard card. The profile is built from live ticks when available and from chart bars (volume spread across each bar's range) on history. A trade-signal layer that is not in the original was added on top (see below).
+**Signal logic:** Nine plots for SneakyTradeHUD AUTO TRADE: each setup plot is +1 on a long signal bar and -1 on a short, and `SigStop` / `SigTarget` carry the latest signal's own stop and target price. Regular hours only, one signal per setup per side per day, none in the last 30 minutes; built for a 1-minute chart.
+- `SigRotation`: after the first hour, a bar touches the developing value-area edge and closes back inside. Target developing POC, stop 2 points beyond the bar.
+- `SigFailedBreakout`: a close outside the prior session's value area, then a close back inside. Target prior POC, stop 2 points beyond the excursion.
+- `SigAcceptance`: 15 straight closes outside the prior value area. Trade with it; stop just inside the edge, target 2R.
+- `SigNakedPoc`: on the first regular-hours bar, trade toward the nearest untouched prior POC that is 0.15 to 0.75 of a typical day's range away, with an equal-distance stop.
+- `SigIbBreak` (and `SigIbBreakWide` / `SigIbBreakNarrow`): first close outside the first regular-hours hour. Stop at the IB midpoint, target one IB range.
+
+Backtest of these exact rules on exported NQ 1-minute data (88 trading days, 11 Jun to 16 Oct 2026, 0.75 points cost per trade): Rotation 106 trades, profit factor 0.95; Failed breakout 61, 1.01; Acceptance 81, 1.03; Naked POC 13, 2.23 (too few trades to trust); IB break 78, 0.74 (narrow IB 40, 0.37; wide IB 29, 1.24). None showed a reliable edge. The original alerts also remain: price trading through a naked POC, a close crossing the developing POC, and a close leaving the developing value area.
 
 ## SneakySuperSmootherFilter_v1_0_0.cs
 **Description:** Clean-room 2-pole Ehlers Super Smoother filter — a near-zero-noise, low-lag recursive filter using canonical Ehlers coefficients, with a Sneaky glass card. A smoother-library building block.
@@ -505,7 +524,7 @@ Full description and entry/signal/trigger logic for every file in this repo (165
 
 ---
 
-## Strategies (20)
+## Strategies (21)
 
 ## DrummondCAPBreakout_v1_0_0.cs
 **Description:** An original, mechanical implementation of a Drummond-Geometry-style "Congestion Action Point" (CAP) breakout — trading a breakout out of a multi-timeframe PL Dot "node" where congestion has formed. Designed for NQ but instrument/timeframe-agnostic; uses the chart's own timeframe plus a second higher timeframe (default 15m).
@@ -551,6 +570,10 @@ Full description and entry/signal/trigger logic for every file in this repo (165
 **Description:** An automated "Council-consumer" strategy with an on-chart control surface — trades a fused multi-voter bias/conviction signal ("Council") or a simpler debounced "Confluence" trigger published by other indicators in the Sneaky Suite, with risk-gating, sizing, and a Helm manual-override layer. Part of the Sneaky Suite architecture rather than a standalone technical setup.
 **Entry logic:** Reads a published "verdict" each bar (from either the Council or Confluence indicator, selectable). An entry fires when the verdict has an actionable edge (HasEdge, non-zero EntryDir) different from the last-fired bias, the strategy is armed (not disarmed/paused), conviction clears a MinConviction floor, SizeMult is > 0, and (optionally) a fresh "God Reversal" trigger aligns with the direction for entry timing. Position size is derived from BaseContracts (or $-risk sizing) scaled by the verdict's SizeMult, then clamped by SneakyCore's account-profile/governor sizing rules, and validated by a risk gate (SneakyCore.GateEntry) before EnterLong/EnterShort.
 **Exit logic:** Managed fixed-tick stop/target (from a lab-derived config file or manual properties); optional exit-on-flip (closes when the source's held bias stops supporting the open side) and optional reverse-on-flip (reverses on an aligned opposing signal).
+
+## SneakyCRTLiquiditySweepStrategy_v1_0_0.cs
+**Description:** NinjaTrader 8 port of TradingView's "CRT Liquidity Sweep Strategy SOL 5 MIN" by jaydeepp095 (open-source Pine v6). Builds a higher-timeframe range (default 4 hours) from the chart's own bars and trades a sweep-and-reclaim of that range, with a range box, TP/SL boxes, trend line and status panel. Not validated as profitable (the original author says the same) and not yet compiled or run in NinjaTrader at the time of writing.
+**Entry logic:** A finished higher-timeframe candle becomes the active range only if it passes a plain-candle filter (not a doji, marubozu or hammer type). Price must then wick beyond the range and reclaim back inside on a same-direction candle, on the sweep bar or within a set number of bars. Optional filters: reclaim close inside the full range, EMA or linear-regression trend filter, ATR-based sweep size. Enters at market with a stop beyond the full sweep extreme (plus optional buffer) and a fixed risk-reward target (default 1:2). One entry per range.
 
 ## SneakyFtkaTrendFollower.cs
 **Description:** A NinjaTrader 8 port of a TradingView Pine v6 strategy ("FTKA Trend Follower") — a trend-following system combining an Adaptive Trend Flow (ATF) band, SMA pullbacks, and a Waddah Attar Explosion (WAE) momentum filter, with staged take-profits. Designed and backtested on NQ at 15m/30m timeframes; author notes it lost money on 1-5m charts.
