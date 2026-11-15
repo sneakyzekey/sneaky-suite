@@ -553,7 +553,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 IsAutoScale = false;
                 DisplayInDataBox = false;
                 PaintPriceMarkers = false;
-                IsSuspendedWhileInactive = true;
+                IsSuspendedWhileInactive = false;   // every zone/line/label this indicator shows lives only in its own
+                                                     // in-memory lists and is painted by its own OnRender -- there are
+                                                     // no persistent Draw.* objects behind it. With this left true,
+                                                     // NinjaTrader stops calling OnBarUpdate/OnRender while the chart
+                                                     // isn't the focused window (e.g. while a Properties dialog has
+                                                     // focus), so the overlays go blank until something forces a
+                                                     // repaint, then vanish again the next time the chart loses focus.
+                                                     // Same fix already applied to SneakyIctFxProIfvgSystem_v1_0_0.cs.
                 AtrLen = 14;
                 LblMode = AobleLabelMode.ZoneStart;
                 ZoneTxtSize = AobleTextSize.Small;
