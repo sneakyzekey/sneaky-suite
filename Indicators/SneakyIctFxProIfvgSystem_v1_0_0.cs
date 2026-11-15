@@ -897,10 +897,52 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 // premium/discount gate for this box's own timeframe range, used by HfPremiumDiscountOnly
                 b.PdOk = ComputeHfPdOk(b);
+            }
+
+            DrawHtfBoxes();
+        }
+
+        // Pine: "only the BEST gap stays" at a given price level — among boxes that pass the SHOW ALL /
+        // premium-discount gate, boxes whose ranges overlap (or whose near edges sit within tolerance)
+        // collapse to the single highest-ranked one (in-range-side fit first, then timeframe size; a tie
+        // keeps the earlier box). Without this, every overlapping HTF gap across 5 timeframes draws its
+        // own stub + label and the chart turns into a wall of text.
+        private void DrawHtfBoxes()
+        {
+            int n = hfBoxes.Count;
+            var cand = new bool[n];
+            var rank = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                HfBox b = hfBoxes[i];
                 // Pine default (SHOW ALL off): HTF FVG / IFVG boxes are not drawn at all
-                bool visible = ShowAll;
-                if (HfPremiumDiscountOnly && !b.PdOk) visible = false;
-                if (visible)
+                bool visible = ShowAll && (!HfPremiumDiscountOnly || b.PdOk);
+                cand[i] = visible;
+                rank[i] = visible ? (ComputeHfFit(b) ? 10000000.0 : 0.0) + b.SecSize : double.NegativeInfinity;
+            }
+            double tol = Math.Max(KeyTol(), 0.5 * (smtAtr > 0 ? smtAtr : KeyTol()));
+            for (int i = 0; i < n; i++)
+            {
+                if (!cand[i]) continue;
+                HfBox bi = hfBoxes[i];
+                double yi = bi.Dir == 1 ? bi.Top : bi.Bot;
+                for (int j = i + 1; j < n; j++)
+                {
+                    if (!cand[j]) continue;
+                    HfBox bj = hfBoxes[j];
+                    double yj = bj.Dir == 1 ? bj.Top : bj.Bot;
+                    bool overlap = bi.Top > bj.Bot && bj.Top > bi.Bot;
+                    bool same = overlap || Math.Abs(yi - yj) <= tol;
+                    if (!same) continue;
+                    int lose = (rank[j] < rank[i] || (rank[j] == rank[i] && j > i)) ? j : i;
+                    cand[lose] = false;
+                    if (lose == i) break; // i is gone; move to next i
+                }
+            }
+            for (int i = 0; i < n; i++)
+            {
+                HfBox b = hfBoxes[i];
+                if (cand[i])
                 {
                     // TradingView look: the gap is a dashed stub at the edge price reached first (bull: its top,
                     // bear: its bottom), a solid tick spanning the whole gap, and the label to the right.
@@ -925,14 +967,31 @@ namespace NinjaTrader.NinjaScript.Indicators
             int cnt = 0; for (int i = 0; i < hfBoxes.Count; i++) if (hfBoxes[i].Slot == slot) cnt++;
             if (cnt > 40) { for (int i = 0; i < hfBoxes.Count; i++) if (hfBoxes[i].Slot == slot) { RemoveDrawObject(hfBoxes[i].Tag); RemoveDrawObject(hfBoxes[i].Tag + "T"); RemoveDrawObject(hfBoxes[i].Tag + "Lb"); hfBoxes.RemoveAt(i); break; } }
         }
+        // own-timeframe premium/discount range for a box's size bucket (week / day / 4H / 1H), Pine-style
+        private void HfRange(int secSize, out double rH, out double rL, out int rD)
+        {
+            rH = double.NaN; rL = double.NaN; rD = 0;
+            if (secSize >= 604800) { rH = pdWH; rL = pdWL; rD = pdWd; }
+            else if (secSize >= 86400) { rH = pdDH; rL = pdDL; rD = pdDd; }
+            else if (secSize >= 14400) { rH = pd4H; rL = pd4L; rD = pd4d; }
+            else if (secSize >= 3600) { rH = pd1H; rL = pd1L; rD = pd1d; }
+        }
+        // gate used by "FVG in premium/discount only": defaults to true (not blocked) when there is no
+        // range data yet for this box's timeframe, same as Pine.
         private bool ComputeHfPdOk(HfBox b)
         {
-            double rH = double.NaN, rL = double.NaN; int rD = 0;
-            if (b.SecSize >= 604800) { } // weekly dealing range not tracked at HTF-table granularity; treat as always ok
-            else if (b.SecSize >= 86400 && !double.IsNaN(pdDH) ) { rH = pdDH; rL = pdDL; rD = pdDd; }
-            else if (b.SecSize >= 14400 && !double.IsNaN(pd4H)) { rH = pd4H; rL = pd4L; rD = pd4d; }
-            else if (b.SecSize >= 3600 && !double.IsNaN(pd1H)) { rH = pd1H; rL = pd1L; rD = pd1d; }
+            HfRange(b.SecSize, out double rH, out double rL, out int rD);
             if (rD == 0 || double.IsNaN(rH) || double.IsNaN(rL) || rH <= rL) return true;
+            double md = (b.Top + b.Bot) / 2.0, eq = (rH + rL) / 2.0;
+            return b.Dir == 1 ? md <= eq : md >= eq;
+        }
+        // ranking signal used only for the same-level dedup ("only the BEST gap stays"): unlike PdOk this
+        // is false, not true, when there is no range data -- a real fit earns the tie-break bonus, missing
+        // data does not.
+        private bool ComputeHfFit(HfBox b)
+        {
+            HfRange(b.SecSize, out double rH, out double rL, out int rD);
+            if (double.IsNaN(rH) || double.IsNaN(rL) || rH <= rL) return false;
             double md = (b.Top + b.Bot) / 2.0, eq = (rH + rL) / 2.0;
             return b.Dir == 1 ? md <= eq : md >= eq;
         }
