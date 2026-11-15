@@ -208,6 +208,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.Configure)
             {
             }
+            else if (State == State.Historical)
+            {
+                // Paint this indicator's OnRender (the dashboard card) above every drawing object,
+                // so profile rows and level lines never show through the panel.
+                SetZOrder(int.MaxValue);
+            }
             else if (State == State.DataLoaded)
             {
                 // Deliberately leave _cur == null here. OnBarUpdate's session-boundary check
@@ -798,7 +804,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 using (var fValue = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.SemiBold, SharpDX.DirectWrite.FontStyle.Normal, 12.5f))
                 using (var fPlain = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 12.5f))
                 using (var fFoot = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 10.5f))
-                using (var bg = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x10, 0x14, 0x1F, 235)))
+                using (var bg = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x10, 0x14, 0x1F, 255)))
                 using (var edge = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x2A, 0x2E, 0x39)))
                 using (var accent = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0xFF, 0xB7, 0x4D)))
                 using (var ink = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0xFF, 0xFF, 0xFF)))
@@ -1179,14 +1185,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double y = side > 0 ? Low[a] - 4 * TickSize : High[a] + 4 * TickSize;
                 if (side > 0) Draw.ArrowUp(this, "SVPsigA" + _sgSeq, false, Time[a], y, c);
                 else Draw.ArrowDown(this, "SVPsigA" + _sgSeq, false, Time[a], y, c);
-                Draw.Text(this, "SVPsigT" + _sgSeq, false, name, Time[a], y, side > 0 ? -22 : 22, c,
+                Draw.Text(this, "SVPsigT" + _sgSeq, false, name, Time[a], y, side > 0 ? -38 : 38, c,
                     new SimpleFont("Segoe UI", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
             }
             if (SigShowLevels)
             {
                 DateTime x1 = Time[a].AddMinutes(15);
-                Draw.Line(this, "SVPsigS" + _sgSeq, false, Time[a], stop, x1, stop, Brushes.OrangeRed, DashStyleHelper.Dash, 1);
-                Draw.Line(this, "SVPsigG" + _sgSeq, false, Time[a], target, x1, target, Brushes.LimeGreen, DashStyleHelper.Dash, 1);
+                Draw.Line(this, "SVPsigS" + _sgSeq, false, Time[a], stop, x1, stop, Brushes.OrangeRed, DashStyleHelper.Dash, 2);
+                Draw.Line(this, "SVPsigG" + _sgSeq, false, Time[a], target, x1, target, Brushes.LimeGreen, DashStyleHelper.Dash, 2);
+                var lf = new SimpleFont("Segoe UI", 9);
+                Draw.Text(this, "SVPsigSL" + _sgSeq, false, "stop", x1, stop, 0, Brushes.OrangeRed, lf, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                Draw.Text(this, "SVPsigGL" + _sgSeq, false, "target", x1, target, 0, Brushes.LimeGreen, lf, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
             }
             return true;
         }
