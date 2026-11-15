@@ -694,25 +694,147 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        // ── dashboard ──
+        // The panel is painted in OnRender (two columns, per-row colours, rounded card).
+        // OnBarUpdate only prepares an immutable list of rows; OnRender just reads the
+        // latest list, so the calculation and render threads never share mutable state.
+        private class PanelRow
+        {
+            public string Label, Value; public byte R, G, B; public bool Bold;
+            public double Bar = double.NaN;   // 0..1 draws a thin up/down volume bar under the row
+        }
+        private volatile List<PanelRow> _panelRows;
+        private volatile string _panelSub = "", _panelFoot = "";
+
+        private static PanelRow Row(string label, string value, byte r, byte g, byte b, bool bold = true)
+        { return new PanelRow { Label = label, Value = value, R = r, G = g, B = b, Bold = bold }; }
+
+        private static string SessionModeLabel(SvpSessionMode m)
+        {
+            switch (m)
+            {
+                case SvpSessionMode.OneHour: return "1 hour";
+                case SvpSessionMode.FourHours: return "4 hours";
+                case SvpSessionMode.OneDayCme: return "1 day";
+                case SvpSessionMode.OneWeek: return "1 week";
+                case SvpSessionMode.TwoWeeks: return "2 weeks";
+                case SvpSessionMode.OneMonth: return "1 month";
+                case SvpSessionMode.CmeRth: return "RTH";
+                case SvpSessionMode.CmeOvernight: return "Overnight";
+                default: return "Custom";
+            }
+        }
+
         private void DrawPanel()
         {
+            RemoveDrawObject("SVPPanel");   // the old plain-text panel, if a saved chart still has it
+            string px = "N" + Math.Max(0, (int)Math.Round(-Math.Log10(TickSize), MidpointRounding.AwayFromZero));
+            var rows = new List<PanelRow>();
             int nakedN = _done.Count(s => !s.Tested);
-            string text = "STRYK:SVP — " + SessionMode + "\n" +
-                "Sessions kept: " + _done.Count + " (" + nakedN + " naked POC)\n";
+            rows.Add(Row("Sessions kept", _done.Count + "  ·  " + nakedN + " naked POC", 0xD1, 0xD4, 0xDC, false));
+
             if (InSession(Time[0]) && !double.IsNaN(_devPocPx))
             {
-                double bp = _devVolT > 0 ? _devBuyT / _devVolT * 100.0 : double.NaN;
-                text += "Developing POC: " + _devPocPx.ToString("0.####") + "\n" +
-                    "Value area: " + (double.IsNaN(_devValPx) || double.IsNaN(_devVahPx) ? "n/a" : _devValPx.ToString("0.####") + " - " + _devVahPx.ToString("0.####")) + "\n" +
-                    "Volume / up-vol: " + FmtVol(_devVolT) + (double.IsNaN(bp) ? "" : "  " + bp.ToString("0") + "%") + "\n" +
-                    "Price is: " + (double.IsNaN(_devVahPx) || double.IsNaN(_devValPx) ? "n/a" : (Close[0] > _devVahPx ? "above value" : Close[0] < _devValPx ? "below value" : "inside value")) + "\n";
+                bool haveVa = !double.IsNaN(_devValPx) && !double.IsNaN(_devVahPx);
+                rows.Add(Row("Developing POC", _devPocPx.ToString(px), 0xFF, 0xFF, 0xFF));
+                rows.Add(Row("Value area", haveVa ? _devValPx.ToString(px) + "  –  " + _devVahPx.ToString(px) : "n/a", 0x42, 0xA5, 0xF5));
+                rows.Add(Row("Volume", FmtVol(_devVolT), 0xD1, 0xD4, 0xDC));
+                if (_devVolT > 0)
+                {
+                    double up = _devBuyT / _devVolT;
+                    var r = up >= 0.5 ? Row("Up-volume", (up * 100.0).ToString("0") + "%", 0x4A, 0xDE, 0x80)
+                                      : Row("Up-volume", (up * 100.0).ToString("0") + "%", 0xEF, 0x53, 0x50);
+                    r.Bar = up;
+                    rows.Add(r);
+                }
+                if (haveVa)
+                {
+                    if (Close[0] > _devVahPx) rows.Add(Row("Price is", "▲  above value", 0x4A, 0xDE, 0x80));
+                    else if (Close[0] < _devValPx) rows.Add(Row("Price is", "▼  below value", 0xEF, 0x53, 0x50));
+                    else rows.Add(Row("Price is", "inside value", 0x42, 0xA5, 0xF5));
+                }
             }
             if (MasterInitialBalance && IbOn && InSession(Time[0]) && _cur != null && !double.IsNaN(_cur.IbH))
-                text += "IB " + IbMinutes + "m: " + _cur.IbL.ToString("0.####") + " - " + _cur.IbH.ToString("0.####") + "\n";
-            text += "Built from: " + (_curLtf && _tickSeenThisBar ? "live ticks" : "chart bars (fallback)") + " · bin " + BinTicks + "t";
+                rows.Add(Row("IB " + IbMinutes + "m", _cur.IbL.ToString(px) + "  –  " + _cur.IbH.ToString(px), 0xCE, 0x93, 0xD8));
 
-            Draw.TextFixed(this, "SVPPanel", text, TextPosition.TopRight, Brushes.White,
-                new SimpleFont("Consolas", 10), Brushes.Transparent, Brushes.Black, 70);
+            _panelSub = SessionModeLabel(SessionMode);
+            _panelFoot = (_curLtf && _tickSeenThisBar ? "Built from live ticks" : "Built from chart bars") + "  ·  bin " + BinTicks + " ticks";
+            _panelRows = rows;
+        }
+
+        private static SharpDX.Color4 Dx(byte r, byte g, byte b, byte a = 255) { return new SharpDX.Color4(r / 255f, g / 255f, b / 255f, a / 255f); }
+
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+            var rows = _panelRows;
+            if (rows == null || rows.Count == 0 || RenderTarget == null || ChartPanel == null) return;
+            if (!(MasterAll && MasterPanel && PanelOn)) return;
+
+            const float W = 268f, Pad = 12f, HeadH = 30f, RowH = 21f, FootH = 22f;
+            float barRows = rows.Count(r => !double.IsNaN(r.Bar));
+            float h = HeadH + rows.Count * RowH + barRows * 7f + FootH + 8f;
+            float x = ChartPanel.X + ChartPanel.W - W - 10f;
+            float y = ChartPanel.Y + 30f;
+
+            var dw = NinjaTrader.Core.Globals.DirectWriteFactory;
+            try
+            {
+                using (var fTitle = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.Bold, SharpDX.DirectWrite.FontStyle.Normal, 13f))
+                using (var fLabel = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 12f))
+                using (var fValue = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.SemiBold, SharpDX.DirectWrite.FontStyle.Normal, 12.5f))
+                using (var fPlain = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 12.5f))
+                using (var fFoot = new SharpDX.DirectWrite.TextFormat(dw, "Segoe UI", SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 10.5f))
+                using (var bg = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x10, 0x14, 0x1F, 235)))
+                using (var edge = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x2A, 0x2E, 0x39)))
+                using (var accent = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0xFF, 0xB7, 0x4D)))
+                using (var ink = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0xFF, 0xFF, 0xFF)))
+                using (var mute = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x8A, 0x91, 0xA3)))
+                using (var dim = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x5D, 0x64, 0x76)))
+                using (var val = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0xFF, 0xFF, 0xFF)))
+                using (var red = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0xEF, 0x53, 0x50)))
+                using (var green = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, Dx(0x4A, 0xDE, 0x80)))
+                {
+                    foreach (var f in new[] { fTitle, fLabel, fValue, fPlain, fFoot })
+                    {
+                        f.WordWrapping = SharpDX.DirectWrite.WordWrapping.NoWrap;
+                        f.ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center;
+                    }
+                    fValue.TextAlignment = SharpDX.DirectWrite.TextAlignment.Trailing;
+                    fPlain.TextAlignment = SharpDX.DirectWrite.TextAlignment.Trailing;
+
+                    var card = new SharpDX.Direct2D1.RoundedRectangle { Rect = new SharpDX.RectangleF(x, y, W, h), RadiusX = 7f, RadiusY = 7f };
+                    RenderTarget.FillRoundedRectangle(card, bg);
+                    RenderTarget.DrawRoundedRectangle(card, edge, 1f);
+
+                    // header: accent bar, title, period on the right
+                    RenderTarget.FillRectangle(new SharpDX.RectangleF(x + Pad, y + 9f, 3f, HeadH - 16f), accent);
+                    RenderTarget.DrawText("STRYK · SVP", fTitle, new SharpDX.RectangleF(x + Pad + 9f, y + 1f, W - 2 * Pad, HeadH), ink);
+                    RenderTarget.DrawText(_panelSub ?? "", fPlain, new SharpDX.RectangleF(x + Pad, y + 1f, W - 2 * Pad, HeadH), mute);
+                    RenderTarget.DrawLine(new SharpDX.Vector2(x + Pad, y + HeadH), new SharpDX.Vector2(x + W - Pad, y + HeadH), edge, 1f);
+
+                    float ry = y + HeadH + 4f;
+                    foreach (var r in rows)
+                    {
+                        var rect = new SharpDX.RectangleF(x + Pad, ry, W - 2 * Pad, RowH);
+                        RenderTarget.DrawText(r.Label ?? "", fLabel, rect, mute);
+                        val.Color = Dx(r.R, r.G, r.B);
+                        RenderTarget.DrawText(r.Value ?? "", r.Bold ? fValue : fPlain, rect, val);
+                        ry += RowH;
+                        if (!double.IsNaN(r.Bar))
+                        {
+                            float bw = W - 2 * Pad, up = (float)Math.Max(0.0, Math.Min(1.0, r.Bar)) * bw;
+                            RenderTarget.FillRectangle(new SharpDX.RectangleF(x + Pad, ry, up, 3f), green);
+                            RenderTarget.FillRectangle(new SharpDX.RectangleF(x + Pad + up, ry, bw - up, 3f), red);
+                            ry += 7f;
+                        }
+                    }
+
+                    RenderTarget.DrawLine(new SharpDX.Vector2(x + Pad, ry + 3f), new SharpDX.Vector2(x + W - Pad, ry + 3f), edge, 1f);
+                    RenderTarget.DrawText(_panelFoot ?? "", fFoot, new SharpDX.RectangleF(x + Pad, ry + 4f, W - 2 * Pad, FootH), dim);
+                }
+            }
+            catch (Exception ex) { Print("SneakyStrykSvp panel render error: " + ex.Message); }
         }
 
         // ── candle-colouring engines (nine, including DRE) ──
