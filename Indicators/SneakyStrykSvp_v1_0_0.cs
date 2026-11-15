@@ -526,6 +526,22 @@ namespace NinjaTrader.NinjaScript.Indicators
         // Every custom brush MUST be frozen. An unfrozen WPF brush belongs to the thread that
         // created it; NinjaTrader calculates bars on one thread and renders on another, so
         // touching an unfrozen brush from the other thread throws InvalidOperationException.
+        // Sends one of this indicator's drawing objects behind the price bars, and therefore
+        // behind the dashboard card too. Set through reflection so a NinjaTrader build that
+        // names the property differently still compiles; in that case nothing changes.
+        private static readonly Dictionary<Type, System.Reflection.PropertyInfo> _zProps = new Dictionary<Type, System.Reflection.PropertyInfo>();
+        private static void Bk(object o)
+        {
+            if (o == null) return;
+            try
+            {
+                Type t = o.GetType(); System.Reflection.PropertyInfo pi;
+                lock (_zProps) { if (!_zProps.TryGetValue(t, out pi)) { pi = t.GetProperty("ZOrder"); _zProps[t] = pi; } }
+                if (pi != null && pi.CanWrite) pi.SetValue(o, -1, null);
+            }
+            catch { }
+        }
+
         private static Brush Fz(Color c) { var b = new SolidColorBrush(c); b.Freeze(); return b; }
 
         private static Brush Heat(double f, Brush loBrush, Brush midBrush, Brush hiBrush)
@@ -572,7 +588,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (ProfileStyle == SvpProfileStyle.Heatmap)
                 {
                     Brush c = Heat(f, HeatColorLow, HeatColorMid, HeatColorHigh);
-                    Draw.Rectangle(this, tag, false, t0, y2, t1, y1, Brushes.Transparent, c, 100 - HeatTransparency);
+                    Bk(Draw.Rectangle(this, tag, false, t0, y2, t1, y1, Brushes.Transparent, c, 100 - HeatTransparency));
                 }
                 else
                 {
@@ -581,7 +597,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Brush c = buyLed ? BarBuyBrush : BarSellBrush;
                     DateTime xa = BarsAnchor == SvpBarsAnchor.SessionStart ? t0 : t1.AddTicks(-w);
                     DateTime xb = BarsAnchor == SvpBarsAnchor.SessionStart ? t0.AddTicks(w) : t1;
-                    Draw.Rectangle(this, tag, false, xa, y2, xb, y1, Brushes.Transparent, c, 100 - BarsTransparency);
+                    Bk(Draw.Rectangle(this, tag, false, xa, y2, xb, y1, Brushes.Transparent, c, 100 - BarsTransparency));
                 }
             }
         }
@@ -612,8 +628,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (MasterAll && MasterValueArea && VaFillShade && !double.IsNaN(justFinalized.Vah) && !double.IsNaN(justFinalized.Val))
                 {
                     justFinalized.VaBoxTag = "SVPva_" + justFinalized.Seq;
-                    Draw.Rectangle(this, justFinalized.VaBoxTag, false, justFinalized.T0, justFinalized.Vah, justFinalized.T1, justFinalized.Val,
-                        Brushes.Transparent, ValueAreaBrush, 100 - VaFillTransparency);
+                    Bk(Draw.Rectangle(this, justFinalized.VaBoxTag, false, justFinalized.T0, justFinalized.Vah, justFinalized.T1, justFinalized.Val,
+                        Brushes.Transparent, ValueAreaBrush, 100 - VaFillTransparency));
                 }
                 if (MasterAll && MasterPoc && !double.IsNaN(justFinalized.Poc))
                     justFinalized.PocLineTag = "SVPpoc_" + justFinalized.Seq;
@@ -628,8 +644,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     justFinalized.IbHTag = "SVPibh_" + justFinalized.Seq;
                     justFinalized.IbLTag = "SVPibl_" + justFinalized.Seq;
-                    Draw.Line(this, justFinalized.IbHTag, false, justFinalized.T0, justFinalized.IbH, justFinalized.T1, justFinalized.IbH, InitialBalanceBrush, DashStyleHelper.Dash, 1);
-                    Draw.Line(this, justFinalized.IbLTag, false, justFinalized.T0, justFinalized.IbL, justFinalized.T1, justFinalized.IbL, InitialBalanceBrush, DashStyleHelper.Dash, 1);
+                    Bk(Draw.Line(this, justFinalized.IbHTag, false, justFinalized.T0, justFinalized.IbH, justFinalized.T1, justFinalized.IbH, InitialBalanceBrush, DashStyleHelper.Dash, 1));
+                    Bk(Draw.Line(this, justFinalized.IbLTag, false, justFinalized.T0, justFinalized.IbL, justFinalized.T1, justFinalized.IbL, InitialBalanceBrush, DashStyleHelper.Dash, 1));
                 }
             }
 
@@ -639,12 +655,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 DateTime xEnd = (s.Tested && PocStopAtTest && s.TestedT != DateTime.MinValue) ? s.TestedT : Time[0];
                 Brush pc = s.Tested ? PocTestedBrush : PocNakedBrush;
                 if (s.PocLineTag != null)
-                    Draw.Line(this, s.PocLineTag, false, s.T0, s.Poc, showIt ? xEnd : s.T1, s.Poc, showIt ? pc : Brushes.Transparent, DashStyleHelper.Solid, 2);
+                    Bk(Draw.Line(this, s.PocLineTag, false, s.T0, s.Poc, showIt ? xEnd : s.T1, s.Poc, showIt ? pc : Brushes.Transparent, DashStyleHelper.Solid, 2));
                 if (s.VahLineTag != null)
                 {
                     DateTime vx = VaExtend ? Time[0] : s.T1;
-                    Draw.Line(this, s.VahLineTag, false, s.T0, s.Vah, vx, s.Vah, MasterAll && MasterValueArea ? ValueAreaBrush : Brushes.Transparent, DashStyleHelper.Dot, 1);
-                    Draw.Line(this, s.ValLineTag, false, s.T0, s.Val, vx, s.Val, MasterAll && MasterValueArea ? ValueAreaBrush : Brushes.Transparent, DashStyleHelper.Dot, 1);
+                    Bk(Draw.Line(this, s.VahLineTag, false, s.T0, s.Vah, vx, s.Vah, MasterAll && MasterValueArea ? ValueAreaBrush : Brushes.Transparent, DashStyleHelper.Dot, 1));
+                    Bk(Draw.Line(this, s.ValLineTag, false, s.T0, s.Val, vx, s.Val, MasterAll && MasterValueArea ? ValueAreaBrush : Brushes.Transparent, DashStyleHelper.Dot, 1));
                 }
                 if (s.TagTag != null)
                 {
@@ -654,8 +670,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                         + " · Vol " + FmtVol(s.Vol)
                         + (double.IsNaN(buyPct) ? "" : " · " + buyPct.ToString("0") + "% up-vol")
                         + (s.Tested ? " · tested" : "");
-                    Draw.Text(this, s.TagTag, false, showIt && MasterTags && TagOn ? txt : "", xEnd, s.Poc, 0,
-                        s.Tested ? PocTestedBrush : PocNakedBrush, new SimpleFont("Arial", 9), TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                    Bk(Draw.Text(this, s.TagTag, false, showIt && MasterTags && TagOn ? txt : "", xEnd, s.Poc, 0,
+                        s.Tested ? PocTestedBrush : PocNakedBrush, new SimpleFont("Arial", 9), TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0));
                 }
             }
         }
@@ -687,29 +703,29 @@ namespace NinjaTrader.NinjaScript.Indicators
                 DrawRows(_devRowTags, "SVPdevRow", _cur.T0, Time[0], dLo, dHi, rowsN, _volMap, _buyMap);
 
             if (MasterValueArea && VaFillShade && !double.IsNaN(vah))
-                Draw.Rectangle(this, "SVPdevVa", false, _cur.T0, vah, Time[0], val, Brushes.Transparent, ValueAreaBrush, 100 - VaFillTransparency);
+                Bk(Draw.Rectangle(this, "SVPdevVa", false, _cur.T0, vah, Time[0], val, Brushes.Transparent, ValueAreaBrush, 100 - VaFillTransparency));
 
             if (DevPocOn && !double.IsNaN(poc))
             {
                 DateTime tagX = Time[0].AddMinutes(TagOffsetBars);
-                Draw.Line(this, "SVPdevPoc", false, _cur.T0, poc, tagX, poc, DevPocBrush, DashStyleHelper.Solid, 2);
+                Bk(Draw.Line(this, "SVPdevPoc", false, _cur.T0, poc, tagX, poc, DevPocBrush, DashStyleHelper.Solid, 2));
                 if (DevTag)
                 {
                     double bp = total > 0 ? buyTotal / total * 100.0 : double.NaN;
-                    Draw.Text(this, "SVPdevTag", false, "developing · Vol " + FmtVol(total) + (double.IsNaN(bp) ? "" : " · " + bp.ToString("0") + "% up-vol"),
-                        tagX, poc, 0, DevPocBrush, new SimpleFont("Arial", 9), TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                    Bk(Draw.Text(this, "SVPdevTag", false, "developing · Vol " + FmtVol(total) + (double.IsNaN(bp) ? "" : " · " + bp.ToString("0") + "% up-vol"),
+                        tagX, poc, 0, DevPocBrush, new SimpleFont("Arial", 9), TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0));
                 }
             }
             if (DevVaOn && MasterValueArea && !double.IsNaN(vah))
             {
-                Draw.Line(this, "SVPdevVah", false, _cur.T0, vah, Time[0], vah, ValueAreaBrush, DashStyleHelper.Dot, 1);
-                Draw.Line(this, "SVPdevVal", false, _cur.T0, val, Time[0], val, ValueAreaBrush, DashStyleHelper.Dot, 1);
+                Bk(Draw.Line(this, "SVPdevVah", false, _cur.T0, vah, Time[0], vah, ValueAreaBrush, DashStyleHelper.Dot, 1));
+                Bk(Draw.Line(this, "SVPdevVal", false, _cur.T0, val, Time[0], val, ValueAreaBrush, DashStyleHelper.Dot, 1));
             }
             if (MasterInitialBalance && IbOn && !double.IsNaN(_cur.IbH))
             {
                 DateTime ibX = IbExtendLive ? Time[0] : _sessStartT.AddMinutes(IbMinutes);
-                Draw.Line(this, "SVPibhLive", false, _cur.T0, _cur.IbH, ibX, _cur.IbH, InitialBalanceBrush, DashStyleHelper.Dash, 1);
-                Draw.Line(this, "SVPiblLive", false, _cur.T0, _cur.IbL, ibX, _cur.IbL, InitialBalanceBrush, DashStyleHelper.Dash, 1);
+                Bk(Draw.Line(this, "SVPibhLive", false, _cur.T0, _cur.IbH, ibX, _cur.IbH, InitialBalanceBrush, DashStyleHelper.Dash, 1));
+                Bk(Draw.Line(this, "SVPiblLive", false, _cur.T0, _cur.IbL, ibX, _cur.IbL, InitialBalanceBrush, DashStyleHelper.Dash, 1));
             }
         }
 
@@ -1183,19 +1199,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (SigShowMarkers)
             {
                 double y = side > 0 ? Low[a] - 4 * TickSize : High[a] + 4 * TickSize;
-                if (side > 0) Draw.ArrowUp(this, "SVPsigA" + _sgSeq, false, Time[a], y, c);
-                else Draw.ArrowDown(this, "SVPsigA" + _sgSeq, false, Time[a], y, c);
-                Draw.Text(this, "SVPsigT" + _sgSeq, false, name, Time[a], y, side > 0 ? -38 : 38, c,
-                    new SimpleFont("Segoe UI", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                if (side > 0) Bk(Draw.ArrowUp(this, "SVPsigA" + _sgSeq, false, Time[a], y, c));
+                else Bk(Draw.ArrowDown(this, "SVPsigA" + _sgSeq, false, Time[a], y, c));
+                Bk(Draw.Text(this, "SVPsigT" + _sgSeq, false, name, Time[a], y, side > 0 ? -38 : 38, c,
+                    new SimpleFont("Segoe UI", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0));
             }
             if (SigShowLevels)
             {
                 DateTime x1 = Time[a].AddMinutes(15);
-                Draw.Line(this, "SVPsigS" + _sgSeq, false, Time[a], stop, x1, stop, Brushes.OrangeRed, DashStyleHelper.Dash, 2);
-                Draw.Line(this, "SVPsigG" + _sgSeq, false, Time[a], target, x1, target, Brushes.LimeGreen, DashStyleHelper.Dash, 2);
+                Bk(Draw.Line(this, "SVPsigS" + _sgSeq, false, Time[a], stop, x1, stop, Brushes.OrangeRed, DashStyleHelper.Dash, 2));
+                Bk(Draw.Line(this, "SVPsigG" + _sgSeq, false, Time[a], target, x1, target, Brushes.LimeGreen, DashStyleHelper.Dash, 2));
                 var lf = new SimpleFont("Segoe UI", 9);
-                Draw.Text(this, "SVPsigSL" + _sgSeq, false, "stop", x1, stop, 0, Brushes.OrangeRed, lf, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
-                Draw.Text(this, "SVPsigGL" + _sgSeq, false, "target", x1, target, 0, Brushes.LimeGreen, lf, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                Bk(Draw.Text(this, "SVPsigSL" + _sgSeq, false, name + " stop", x1, stop, 0, Brushes.OrangeRed, lf, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0));
+                Bk(Draw.Text(this, "SVPsigGL" + _sgSeq, false, name + " target", x1, target, 0, Brushes.LimeGreen, lf, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0));
             }
             return true;
         }
