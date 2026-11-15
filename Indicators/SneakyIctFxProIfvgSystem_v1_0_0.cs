@@ -1402,15 +1402,21 @@ namespace NinjaTrader.NinjaScript.Indicators
         // SIMPLIFIED BY DESIGN vs the Pine source's f_ifvgUpdate / f_sweptLiq / f_ivTarget / f_ivOpp /
         // f_ifvgFreeze / f_disp machinery: this port keeps the ICT "inverse FVG" concept itself exactly —
         // a 3-bar fair-value gap that price later closes back through flips polarity and becomes the new
-        // signal zone — and reuses the run-based CISD engine's own confirmation (_liqBuNow/_liqBeNow) as
-        // the trigger, same as the Pine source. What's simplified: Pine's own multi-stage freeze/lock/
-        // trace-vs-live state machine is collapsed into the single IctSig lifecycle below (armed -> hit ->
+        // signal zone. Pine's comment is explicit about the trigger: "NO CISD WAIT: the IFVG search starts
+        // as soon as a 20-candle high/low is ARMED ... so the IFVG appears on the candle that closes
+        // through the gap. A CISD later only marks it." So the search runs every bar while that side is
+        // armed (_aBuOnNow/_aBeOnNow), not only on the CISD confirmation bar (_liqBuNow/_liqBeNow) -- a
+        // fresh CISD confirmation also retries it, matching Pine's "CISD on an extreme that has no search
+        // yet -> start one now". What's simplified vs Pine's own multi-stage freeze/lock/trace-vs-live
+        // state machine: that is collapsed into the single IctSig lifecycle below (armed -> hit ->
         // target/gone), and the "near IFVG" alert distance uses KeyTol() rather than Pine's separate ATR
         // fraction. See header note 2 for the full simplification list.
         private const int IfvgLookback = 30;
         private void UpdateIfvgEngine()
         {
             if (!EnableIfvg) { ivOwnBull = null; ivOwnBear = null; RemoveIfvgDraw(null); return; }
+            if (_aBuOnNow) TrySpawnIfvg(1);
+            if (_aBeOnNow) TrySpawnIfvg(-1);
             if (_liqBuNow) TrySpawnIfvg(1);
             if (_liqBeNow) TrySpawnIfvg(-1);
             ivOwnBull = StepIfvg(ivOwnBull);
