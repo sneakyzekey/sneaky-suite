@@ -205,7 +205,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
-                _cur = new SvpSession { Seq = ++_seqCounter };
+                // Deliberately leave _cur == null here. OnBarUpdate's session-boundary check
+                // (DetectNewSession) treats _cur == null as "start the first session now" and
+                // properly stamps T0/_sessStartT to the first real bar's Time[0]. Pre-creating
+                // _cur here used to short-circuit that: _cur became non-null before any bar had
+                // run, so the real first-session setup never fired until the next calendar-day
+                // rollover, leaving T0 stuck at DateTime.MinValue for the whole first day. That
+                // bogus time then got passed as a Draw anchor (profile rows, POC/VA/IB lines),
+                // which throws and is swallowed by OnBarUpdate's try/catch -- silently freezing
+                // the panel and suppressing every drawn element until the next session rolled in.
             }
         }
 
