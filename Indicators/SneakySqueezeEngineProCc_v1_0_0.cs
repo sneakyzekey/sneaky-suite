@@ -62,7 +62,7 @@ namespace NinjaTrader.NinjaScript.Indicators
     public enum CcSignalMode { EarlierSignals, Balanced, StrongerConfirmation }
     public enum CcEngineMode { Classic, Pro, Early }
 
-    public class SqueezeEngineProCc_v1_0_0 : Indicator
+    public class SneakySqueezeEngineProCc_v1_0_0 : Indicator
     {
         // ───────────────────────── persistent state ─────────────────────────
         private Series<double> srcMinusAnchor, rawMomentumSeries, velocitySeries;
@@ -208,7 +208,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (State == State.SetDefaults)
             {
-                Name = "Squeeze Engine PRO CC";
+                Name = "Sneaky Squeeze Engine PRO CC";
                 Description = "Ported from TradingView 'Squeeze Engine PRO [CandleChasers]' — BB/KC squeeze, LazyBear-style momentum, HTF/ADX/volume confluence, pivot divergences and a virtual trade-lifecycle dashboard. Research tool, not a backtested strategy.";
                 Calculate = Calculate.OnBarClose;
                 IsOverlay = false;

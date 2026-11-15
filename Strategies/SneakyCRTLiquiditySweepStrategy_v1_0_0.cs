@@ -74,7 +74,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
     public enum CrtTrendMethod { Off, Ema, LinearRegression }
 
-    public class CRTLiquiditySweepStrategy_v1_0_0 : Strategy
+    public class SneakyCRTLiquiditySweepStrategy_v1_0_0 : Strategy
     {
         private const string EntryLong  = "CRTLong";
         private const string EntryShort = "CRTShort";
@@ -108,7 +108,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                             + "range from this chart's own bars, trades a sweep-beyond-the-range then "
                             + "reclaim-back-inside, with an EMA/linear-regression trend filter and fixed "
                             + "R:R risk. Not validated as profitable — same disclaimer as the original.";
-                Name = "CRT Liquidity Sweep Strategy";
+                Name = "Sneaky CRT Liquidity Sweep Strategy";
 
                 Calculate                    = Calculate.OnBarClose;
                 EntriesPerDirection          = 1;

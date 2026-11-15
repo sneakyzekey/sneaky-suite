@@ -81,7 +81,7 @@ namespace NinjaTrader.NinjaScript.Indicators
     public enum SvpDreReference { HtfWindowNCandles, LastHtfCandle, PriorSessionProfile }
     public enum SvpDreIntensity { DistanceOnly, Blend, Strongest }
 
-    public class StrykSvp_v1_0_0 : Indicator
+    public class SneakyStrykSvp_v1_0_0 : Indicator
     {
         // ── one finished session's data + the tags of what's drawn for it ──
         private class SvpSession
@@ -140,7 +140,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                             + "value area, developing session, initial balance, and nine candle-colouring "
                             + "engines. Real tick data drives the profile (quote-rule classification), not "
                             + "a lower-timeframe-bar proxy — needs live ticks or Tick Replay for history.";
-                Name = "STRYK SVP";
+                Name = "Sneaky STRYK SVP";
                 Calculate = Calculate.OnEachTick;
                 IsOverlay = true;
                 IsAutoScale = false;

@@ -115,7 +115,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
     public enum IctHtfTimeframe { M15, M30, H1, H4, D1, W1 }
 
-    public class IctFxProIfvgSystem_v1_0_0 : Indicator
+    public class SneakyIctFxProIfvgSystem_v1_0_0 : Indicator
     {
         // ───────────────────────── IFVG signal object ─────────────────────────
         private class IctSig
@@ -298,7 +298,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (State == State.SetDefaults)
             {
-                Name = "ICT FX PRO IFVG System";
+                Name = "Sneaky ICT FX PRO IFVG System";
                 Description = "Full port of TradingView's open-source 'ICT FX PRO IFVG SYSTEM V 6.0' (ICTFX_PRO, MPL-2.0): liquidity-sweep IFVG engine, CISD run-tracking, 5-slot HTF FVG/IFVG, sessions/key levels, BSL/SSL liquidity, NDOG/NWOG, Premium & Discount dealing range with HTF table, PO3 and the 8 AM breakout — with the full alert set. See header for documented omissions/simplifications.";
                 Calculate = Calculate.OnBarClose;
                 IsOverlay = true;
