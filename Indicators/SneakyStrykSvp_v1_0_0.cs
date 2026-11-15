@@ -96,6 +96,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             public bool Tested; public bool LtfBuilt = true;
             public double IbH = double.NaN, IbL = double.NaN;
             public List<string> RowTags = new List<string>();
+            public Dictionary<double, double> VolSnap, BuySnap;   // this session's own volume map, kept until its rows are drawn
             public string VaBoxTag, PocLineTag, VahLineTag, ValLineTag, TagTag, IbHTag, IbLTag;
         }
         private class HtfProfile { public Dictionary<double, double> Vol = new Dictionary<double, double>(); public Dictionary<double, double> Buy = new Dictionary<double, double>(); }
@@ -372,9 +373,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 case SvpSessionMode.FourHours:
                     return _havePrevTime && (Time[0].Hour / 4) != (_prevTime.Hour / 4) && Time[0].Date == _prevTime.Date || (_havePrevTime && Time[0].Date != _prevTime.Date);
                 case SvpSessionMode.OneDayCme:
-                    return _havePrevTime && TradingDayOf(Time[0]) != TradingDayOf(_prevTime);
+                    // The chart's Trading Hours template defines the session, so this is right in any
+                    // chart time zone and never puts the session's closing bar into the next day.
+                    return Bars.IsFirstBarOfSession;
                 case SvpSessionMode.OneWeek:
-                    return _havePrevTime && TradingWeekOf(Time[0]) != TradingWeekOf(_prevTime);
+                    // first session after a weekend-sized gap
+                    return Bars.IsFirstBarOfSession && _havePrevTime && (Time[0] - _prevTime).TotalHours > 30;
                 case SvpSessionMode.TwoWeeks:
                     return _havePrevTime && (TradingWeekOf(Time[0]).Ticks / (TimeSpan.TicksPerDay * 14)) != (TradingWeekOf(_prevTime).Ticks / (TimeSpan.TicksPerDay * 14));
                 case SvpSessionMode.OneMonth:
@@ -473,6 +477,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             Analyse(_volMap, _buyMap, out poc, out pocVol, out total, out buyTotal, out vah, out val);
             _cur.Poc = poc; _cur.PocVol = pocVol; _cur.Vol = total; _cur.BuyVol = buyTotal; _cur.Vah = vah; _cur.Val = val;
             _cur.LtfBuilt = _curLtf;
+            _cur.VolSnap = new Dictionary<double, double>(_volMap);
+            _cur.BuySnap = new Dictionary<double, double>(_buyMap);
             _done.Add(_cur);
             while (_done.Count > SessionsToKeep)
             {
@@ -565,12 +571,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             // (the others' statics don't change bar to bar) — but DO refresh naked/tested
             // colour + extension every bar since that can flip at any time.
             var justFinalized = _done[_done.Count - 1];
-            if (justFinalized.RowTags.Count == 0)
+            if (justFinalized.VolSnap != null)
             {
+                var snapVol = justFinalized.VolSnap; var snapBuy = justFinalized.BuySnap;
+                justFinalized.VolSnap = null; justFinalized.BuySnap = null;   // draw once, then release
                 int rowsN = RowBudget();
                 string prefix = "SVProw_" + justFinalized.Seq;
                 if (MasterAll && MasterProfiles)
-                    DrawRows(justFinalized.RowTags, prefix, justFinalized.T0, justFinalized.T1, justFinalized.Lo, justFinalized.Hi, rowsN, _volMap, _buyMap);
+                    DrawRows(justFinalized.RowTags, prefix, justFinalized.T0, justFinalized.T1, justFinalized.Lo, justFinalized.Hi, rowsN, snapVol, snapBuy);
 
                 if (MasterAll && MasterValueArea && VaFillShade && !double.IsNaN(justFinalized.Vah) && !double.IsNaN(justFinalized.Val))
                 {
@@ -782,7 +790,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 case SvpHtfPaint.M60: return Time[0].Hour != _prevTime.Hour || Time[0].Date != _prevTime.Date;
                 case SvpHtfPaint.M120: return (Time[0].Hour / 2) != (_prevTime.Hour / 2) || Time[0].Date != _prevTime.Date;
                 case SvpHtfPaint.M240: return (Time[0].Hour / 4) != (_prevTime.Hour / 4) || Time[0].Date != _prevTime.Date;
-                case SvpHtfPaint.Daily: return TradingDayOf(Time[0]) != TradingDayOf(_prevTime);
+                case SvpHtfPaint.Daily: return Bars.IsFirstBarOfSession;
                 default: return false;
             }
         }
