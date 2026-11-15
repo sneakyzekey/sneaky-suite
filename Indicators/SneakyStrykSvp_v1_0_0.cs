@@ -333,7 +333,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (IsFirstTickOfBar) _tickSeenThisBar = false;
                 _prevTime = Time[0]; _havePrevTime = true;
             }
-            catch (Exception ex) { Print("StrykSvp OnBarUpdate error: " + ex.Message); }
+            catch (Exception ex)
+            {
+                // Never fail silently: say so on the chart and put the full trace in the Output window.
+                Print("SneakyStrykSvp OnBarUpdate error at bar " + CurrentBar + ": " + ex);
+                try { Draw.TextFixed(this, "SVPErr", "Sneaky STRYK SVP error (see NinjaScript Output): " + ex.Message, TextPosition.BottomRight); } catch { }
+            }
         }
 
         // Folds bar[1] (the bar that just closed) into _volMap/_buyMap — using the real
@@ -483,12 +488,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        // Every custom brush MUST be frozen. An unfrozen WPF brush belongs to the thread that
+        // created it; NinjaTrader calculates bars on one thread and renders on another, so
+        // touching an unfrozen brush from the other thread throws InvalidOperationException.
+        private static Brush Fz(Color c) { var b = new SolidColorBrush(c); b.Freeze(); return b; }
+
         private static Brush Heat(double f, Brush loBrush, Brush midBrush, Brush hiBrush)
         {
             f = Math.Max(0, Math.Min(1, f));
             Color lo = ((SolidColorBrush)loBrush).Color, mid = ((SolidColorBrush)midBrush).Color, hi = ((SolidColorBrush)hiBrush).Color;
             Color c = f <= 0.5 ? LerpColor(lo, mid, f / 0.5) : LerpColor(mid, hi, (f - 0.5) / 0.5);
-            return new SolidColorBrush(c);
+            return Fz(c);
         }
         private static Color LerpColor(Color a, Color b, double t)
         {
@@ -784,7 +794,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static Brush GradBrush(double n, Color neut, Color bull, Color bear)
         {
             n = Math.Max(-1, Math.Min(1, n));
-            return n >= 0 ? new SolidColorBrush(LerpColor(neut, bull, n)) : new SolidColorBrush(LerpColor(bear, neut, n + 1));
+            return n >= 0 ? Fz(LerpColor(neut, bull, n)) : Fz(LerpColor(bear, neut, n + 1));
         }
 
         private void PaintCandle()
@@ -827,12 +837,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 case SvpPaintEngine.DeltaSign:
                 {
                     double barDelta = Close[1] > Open[1] ? Volume[1] : Close[1] < Open[1] ? -Volume[1] : 0.0;
-                    col = barDelta > 0 ? new SolidColorBrush(PaintBull) : barDelta < 0 ? new SolidColorBrush(PaintBear) : new SolidColorBrush(PaintNeutral);
+                    col = barDelta > 0 ? Fz(PaintBull) : barDelta < 0 ? Fz(PaintBear) : Fz(PaintNeutral);
                     break;
                 }
                 case SvpPaintEngine.ValueAreaPosition:
                     if (!double.IsNaN(refVah) && !double.IsNaN(refVal))
-                        col = Close[0] > refVah ? new SolidColorBrush(PaintBull) : Close[0] < refVal ? new SolidColorBrush(PaintBear) : new SolidColorBrush(PaintNeutral);
+                        col = Close[0] > refVah ? Fz(PaintBull) : Close[0] < refVal ? Fz(PaintBear) : Fz(PaintNeutral);
                     break;
                 case SvpPaintEngine.DistanceFromPoc:
                     if (!double.IsNaN(refPoc) && !double.IsNaN(refVah) && !double.IsNaN(refVal))
@@ -878,7 +888,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             double dVah = DreReference == SvpDreReference.HtfWindowNCandles ? _refVahW : DreReference == SvpDreReference.LastHtfCandle ? _refVahL : refVah;
             double dVal = DreReference == SvpDreReference.HtfWindowNCandles ? _refValW : DreReference == SvpDreReference.LastHtfCandle ? _refValL : refVal;
 
-            if (double.IsNaN(dPoc) || double.IsNaN(dVah) || double.IsNaN(dVal) || dVah <= dVal) return new SolidColorBrush(PaintNeutral);
+            if (double.IsNaN(dPoc) || double.IsNaN(dVah) || double.IsNaN(dVal) || dVah <= dVal) return Fz(PaintNeutral);
 
             bool dreUp = Close[0] > dVah, dreDn = Close[0] < dVal;
             _dreAcc = (dreUp || dreDn) ? ((dreUp && _dreUpPrev) || (dreDn && _dreDnPrev) ? _dreAcc + 1 : 1) : 0;
@@ -911,7 +921,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 bool greenZone = Close[0] > dVah;
                 bool aligned = (greenZone && htfLiveD > 0) || (!greenZone && htfLiveD < 0);
                 double adj = aligned ? Math.Min(1.0, frac + DreAlignBoost) : frac * (1.0 - DreAlignBoost);
-                return greenZone ? new SolidColorBrush(LerpColor(PaintNeutral, PaintBull, adj)) : new SolidColorBrush(LerpColor(PaintNeutral, PaintBear, adj));
+                return greenZone ? Fz(LerpColor(PaintNeutral, PaintBull, adj)) : Fz(LerpColor(PaintNeutral, PaintBear, adj));
             }
             else
             {
@@ -924,7 +934,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Color leanCol = Close[0] > dPoc ? LerpColor(PaintNeutral, PaintBull, lean) : LerpColor(PaintNeutral, PaintBear, lean);
                 Color baseCol = DreLean > 0 ? leanCol : PaintNeutral;
                 byte alpha = (byte)Math.Round(depth * 255);
-                return new SolidColorBrush(Color.FromArgb(alpha, baseCol.R, baseCol.G, baseCol.B));
+                return Fz(Color.FromArgb(alpha, baseCol.R, baseCol.G, baseCol.B));
             }
         }
 
@@ -982,11 +992,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty] [Range(0, 95)] [Display(Name = "Bars transparency", GroupName = "3. Profiles on chart", Order = 3)] public int BarsTransparency { get; set; }
         [NinjaScriptProperty] [Display(Name = "Bars grow from", GroupName = "3. Profiles on chart", Order = 4)] public SvpBarsAnchor BarsAnchor { get; set; }
         [NinjaScriptProperty] [Range(10, 100)] [Display(Name = "Bars: max length (% of session)", GroupName = "3. Profiles on chart", Order = 5)] public int BarsMaxWidthPct { get; set; }
-        [XmlIgnore] [Browsable(false)] public Brush HeatColorLow { get; set; } = new SolidColorBrush(Color.FromRgb(0x0B, 0x1F, 0x3A));
-        [XmlIgnore] [Browsable(false)] public Brush HeatColorMid { get; set; } = new SolidColorBrush(Color.FromRgb(0x1E, 0x8C, 0x7A));
-        [XmlIgnore] [Browsable(false)] public Brush HeatColorHigh { get; set; } = new SolidColorBrush(Color.FromRgb(0xF5, 0xD1, 0x42));
-        [XmlIgnore] [Browsable(false)] public Brush BarBuyBrush { get; set; } = new SolidColorBrush(Color.FromRgb(0x26, 0xA6, 0x9A));
-        [XmlIgnore] [Browsable(false)] public Brush BarSellBrush { get; set; } = new SolidColorBrush(Color.FromRgb(0xEF, 0x53, 0x50));
+        [XmlIgnore] [Browsable(false)] public Brush HeatColorLow { get; set; } = Fz(Color.FromRgb(0x0B, 0x1F, 0x3A));
+        [XmlIgnore] [Browsable(false)] public Brush HeatColorMid { get; set; } = Fz(Color.FromRgb(0x1E, 0x8C, 0x7A));
+        [XmlIgnore] [Browsable(false)] public Brush HeatColorHigh { get; set; } = Fz(Color.FromRgb(0xF5, 0xD1, 0x42));
+        [XmlIgnore] [Browsable(false)] public Brush BarBuyBrush { get; set; } = Fz(Color.FromRgb(0x26, 0xA6, 0x9A));
+        [XmlIgnore] [Browsable(false)] public Brush BarSellBrush { get; set; } = Fz(Color.FromRgb(0xEF, 0x53, 0x50));
 
         // -- 4. POC lines --
         [NinjaScriptProperty] [Display(Name = "Extend naked POC to current bar", GroupName = "4. POC lines", Order = 0)] public bool PocExtendToCurrentBar { get; set; }
@@ -994,15 +1004,15 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty] [Display(Name = "Hide tested POCs entirely", GroupName = "4. POC lines", Order = 2)] public bool PocHideTested { get; set; }
         [NinjaScriptProperty] [Display(Name = "Tag each POC", GroupName = "4. POC lines", Order = 3)] public bool TagOn { get; set; }
         [NinjaScriptProperty] [Range(0, 100)] [Display(Name = "Tag offset right (minutes)", GroupName = "4. POC lines", Order = 4)] public int TagOffsetBars { get; set; }
-        [XmlIgnore] [Browsable(false)] public Brush PocNakedBrush { get; set; } = new SolidColorBrush(Color.FromRgb(0xFF, 0xB7, 0x4D));
-        [XmlIgnore] [Browsable(false)] public Brush PocTestedBrush { get; set; } = new SolidColorBrush(Color.FromRgb(0x78, 0x7B, 0x86));
+        [XmlIgnore] [Browsable(false)] public Brush PocNakedBrush { get; set; } = Fz(Color.FromRgb(0xFF, 0xB7, 0x4D));
+        [XmlIgnore] [Browsable(false)] public Brush PocTestedBrush { get; set; } = Fz(Color.FromRgb(0x78, 0x7B, 0x86));
 
         // -- 5. value area --
         [NinjaScriptProperty] [Display(Name = "VAH / VAL lines", GroupName = "5. Value area", Order = 0)] public bool VaLines { get; set; }
         [NinjaScriptProperty] [Display(Name = "Extend VAH/VAL to current bar", GroupName = "5. Value area", Order = 1)] public bool VaExtend { get; set; }
         [NinjaScriptProperty] [Display(Name = "Shade the value area", GroupName = "5. Value area", Order = 2)] public bool VaFillShade { get; set; }
         [NinjaScriptProperty] [Range(50, 100)] [Display(Name = "Value area fill transparency", GroupName = "5. Value area", Order = 3)] public int VaFillTransparency { get; set; }
-        [XmlIgnore] [Browsable(false)] public Brush ValueAreaBrush { get; set; } = new SolidColorBrush(Color.FromRgb(0x42, 0xA5, 0xF5));
+        [XmlIgnore] [Browsable(false)] public Brush ValueAreaBrush { get; set; } = Fz(Color.FromRgb(0x42, 0xA5, 0xF5));
 
         // -- 6. developing session --
         [NinjaScriptProperty] [Display(Name = "Draw the developing profile", GroupName = "6. Developing session", Order = 0)] public bool DevDrawProfile { get; set; }
@@ -1010,7 +1020,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty] [Display(Name = "Developing VAH / VAL", GroupName = "6. Developing session", Order = 2)] public bool DevVaOn { get; set; }
         [NinjaScriptProperty] [Display(Name = "Tag the developing POC", GroupName = "6. Developing session", Order = 3)] public bool DevTag { get; set; }
         [XmlIgnore] [Browsable(false)] public Brush DevPocBrush { get; set; } = Brushes.White;
-        [XmlIgnore] [Browsable(false)] public Brush InitialBalanceBrush { get; set; } = new SolidColorBrush(Color.FromRgb(0xAB, 0x47, 0xBC));
+        [XmlIgnore] [Browsable(false)] public Brush InitialBalanceBrush { get; set; } = Fz(Color.FromRgb(0xAB, 0x47, 0xBC));
 
         // -- 7. panel --
         [NinjaScriptProperty] [Display(Name = "Show panel", GroupName = "7. Panel", Order = 0)] public bool PanelOn { get; set; }
