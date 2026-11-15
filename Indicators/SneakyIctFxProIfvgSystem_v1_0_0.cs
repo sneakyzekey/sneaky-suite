@@ -1,7 +1,11 @@
 #region Using declarations
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
 using System.Windows.Media;
+using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.Gui;
@@ -304,7 +308,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Calculate = Calculate.OnBarClose;
                 IsOverlay = true;
                 IsSuspendedWhileInactive = false;
-                MaxBarsLookBack = MaxBarsLookBack.Infinite;
+                MaximumBarsLookBack = MaximumBarsLookBack.Infinite;
 
                 ShowPo3 = true; ShowBreakout = true; BreakoutHistory = true; BreakoutHistoryDays = 5; BahrainOffsetHours = 9;
 
