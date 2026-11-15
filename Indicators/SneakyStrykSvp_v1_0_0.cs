@@ -65,6 +65,9 @@ using System.Windows.Media;
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
@@ -472,9 +475,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        private static Brush Heat(double f, Color lo, Color mid, Color hi)
+        private static Brush Heat(double f, Brush loBrush, Brush midBrush, Brush hiBrush)
         {
             f = Math.Max(0, Math.Min(1, f));
+            Color lo = ((SolidColorBrush)loBrush).Color, mid = ((SolidColorBrush)midBrush).Color, hi = ((SolidColorBrush)hiBrush).Color;
             Color c = f <= 0.5 ? LerpColor(lo, mid, f / 0.5) : LerpColor(mid, hi, (f - 0.5) / 0.5);
             return new SolidColorBrush(c);
         }
