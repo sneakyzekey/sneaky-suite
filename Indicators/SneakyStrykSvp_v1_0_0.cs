@@ -242,7 +242,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             double binPx = TickSize * BinTicks;
             if (binPx <= 0) return px;
-            return Math.Round(px / binPx) * binPx;
+            return Math.Round(px / binPx, MidpointRounding.AwayFromZero) * binPx;
         }
 
         private static void AddVol(Dictionary<double, double> vol, Dictionary<double, double> buy, double k, double v, bool isBuy)
@@ -260,11 +260,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             double binPx = TickSize * BinTicks;
             if (binPx <= 0) return;
             double k0 = BinOf(lo), k1 = BinOf(hi);
-            int nb = Math.Max(1, Math.Min(400, (int)Math.Round((k1 - k0) / binPx) + 1));
+            int nb = Math.Max(1, Math.Min(400, (int)Math.Round((k1 - k0) / binPx, MidpointRounding.AwayFromZero) + 1));
             double share = v / nb;
             for (int j = 0; j < nb; j++)
             {
-                double k = Math.Round(k0 / binPx + j) * binPx;
+                double k = Math.Round(k0 / binPx + j, MidpointRounding.AwayFromZero) * binPx;
                 AddVol(vol, buy, k, share, barIsUp);
             }
         }
@@ -274,6 +274,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 bool isNewBarTick = IsFirstTickOfBar;
+
+                // Bars that arrive already complete (history without Tick Replay) are folded
+                // into the profile on their own update; live / Tick Replay bars are folded on
+                // the first tick of the NEXT bar -- and that has to happen BEFORE the session
+                // check below, so a session's closing bar stays in its own session.
+                bool wholeBars = State == State.Historical && !Bars.IsTickReplay;
+                if (!wholeBars && isNewBarTick && CurrentBar >= 1 && _cur != null && InSession(Time[1]))
+                    FoldBar(1);
 
                 // ---- session boundary detection (see header note #2) ----
                 bool newSess = DetectNewSession(isNewBarTick);
@@ -302,9 +310,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         _cur.IbL = double.IsNaN(_cur.IbL) ? Low[0] : Math.Min(_cur.IbL, Low[0]);
                     }
 
-                    // fold the bar that just closed into the maps, once, on its last tick
-                    if (IsFirstTickOfBar && CurrentBar >= 1)
-                        FoldClosedBarIntoMaps();
+                    if (wholeBars) FoldBar(0);
                 }
 
                 // naked -> tested bookkeeping (closed bars only)
@@ -342,21 +348,25 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        // Folds bar[1] (the bar that just closed) into _volMap/_buyMap — using the real
-        // ticks collected while it was live if any were seen, otherwise Pine's own
-        // documented bar-level fallback. Mirrors Pine's `if barstate.isconfirmed` block.
-        private void FoldClosedBarIntoMaps()
+        // Folds one finished bar into the session maps exactly once. If real ticks were
+        // collected while it was live they are already in the maps (OnMarketData); otherwise
+        // Pine's own documented fallback applies: the bar's volume spread across its range.
+        private int _lastFoldedBar = -1;
+        private void FoldBar(int barsAgo)
         {
-            if (_tickSeenThisBar)
+            int idx = CurrentBar - barsAgo;
+            if (idx <= _lastFoldedBar) return;
+            _lastFoldedBar = idx;
+            if (barsAgo == 1 && _tickSeenThisBar)
             {
-                _curLtf = true;   // real ticks were used for this bar — same meaning as Pine's haveLtf
+                _curLtf = true;   // real ticks were used for this bar -- same meaning as Pine's haveLtf
             }
-            else if (Volume[1] > 0)
+            else if (Volume[barsAgo] > 0)
             {
                 _curLtf = false;
-                bool barUp = Close[1] > Open[1];
-                AddBarFallback(_volMap, _buyMap, Low[1], High[1], Volume[1], barUp);
-                AddBarFallback(_cMap, _cBuy, Low[1], High[1], Volume[1], barUp);
+                bool barUp = Close[barsAgo] > Open[barsAgo];
+                AddBarFallback(_volMap, _buyMap, Low[barsAgo], High[barsAgo], Volume[barsAgo], barUp);
+                AddBarFallback(_cMap, _cBuy, Low[barsAgo], High[barsAgo], Volume[barsAgo], barUp);
             }
         }
 
@@ -443,13 +453,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             var keys = vol.Keys.OrderBy(k => k).ToList();
             double firstK = keys[0], lastK = keys[keys.Count - 1];
-            int n = (int)Math.Round((lastK - firstK) / binPx) + 1;
+            int n = (int)Math.Round((lastK - firstK) / binPx, MidpointRounding.AwayFromZero) + 1;
             double[] ks = new double[n];
             double[] vs = new double[n];
             int pi = 0;
             for (int i = 0; i < n; i++)
             {
-                double k = Math.Round(firstK / binPx + i) * binPx;
+                double k = Math.Round(firstK / binPx + i, MidpointRounding.AwayFromZero) * binPx;
                 double v; vol.TryGetValue(k, out v);
                 double b; buy.TryGetValue(k, out b);
                 ks[i] = k; vs[i] = v;
