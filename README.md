@@ -46,7 +46,7 @@ These are the original charts of the open-source indicators that several Sneaky 
 
 ## Contents
 
-- **`Indicators/`** — 127 chart indicators
+- **`Indicators/`** — 128 chart indicators
 - **`Strategies/`** — 21 automated strategies
 - **`AddOns/`** — 21 NinjaTrader AddOn services (risk/logging/alerts/dashboard/HUD infrastructure)
 - **`GradingToolkit/`** — Python scripts for grading/validating Council &
