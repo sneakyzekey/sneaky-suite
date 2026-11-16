@@ -2114,11 +2114,22 @@ namespace NinjaTrader.NinjaScript.Indicators
             return sb.ToString().Trim();
         }
 
+        // This HUD manages all its own settings through its own WPF panel rather than NinjaTrader's
+        // Properties grid, so none of them actually carry [NinjaScriptProperty] -- that attribute
+        // doesn't appear anywhere in this file. The real tell for "this is one of the HUD's own
+        // settings" is [Display(...)] (the ones shown in the grid anyway, for completeness/defaults)
+        // or [Browsable(false)] (the extra AutoLongSource2..10 / AutoShortSource2..10 slots, hidden
+        // from the grid on purpose because there can be up to 10 of them). Filtering on
+        // NinjaScriptPropertyAttribute instead matched nothing, so SaveTemplate/LoadTemplate were
+        // silently saving and restoring zero properties -- only __AccountOverride ever took effect,
+        // which is exactly why cycling templates looked like it did nothing to the AUTO TRADE rows.
         private PropertyInfo[] TemplateProps()
         {
             return GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0
-                            && p.GetCustomAttributes(typeof(NinjaScriptPropertyAttribute), true).Length > 0)
+                            && p.DeclaringType == typeof(SneakyTradeHUD)
+                            && (p.GetCustomAttributes(typeof(DisplayAttribute), true).Length > 0
+                                || p.GetCustomAttributes(typeof(BrowsableAttribute), true).Any(a => !((BrowsableAttribute)a).Browsable)))
                 .ToArray();
         }
 
