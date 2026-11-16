@@ -1487,6 +1487,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private D2D.StrokeStyle stDash, stDot;
         private int rnCount;
         private int rLast;
+        private NinjaTrader.Data.Bars rBars;   // ChartBars.Bars: the series the chart shows, not BarsArray[BarsInProgress]
         private float rFrom, rX0, rSp, pL, pR, pT, pB;
         private ChartControl rCtl; private ChartScale rScale;
 
@@ -1628,7 +1629,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try
                 {
                     string dbg = "AOBLE r" + (++rnCount) + " from=" + from + " to=" + to
-                               + " cb=" + CurrentBar + " bip=" + BarsInProgress + " last=" + (Bars.Count - 1)
+                               + " cb=" + CurrentBar + " bip=" + BarsInProgress + " ctxlast=" + (Bars == null ? -1 : Bars.Count - 1) + " chartlast=" + (ChartBars.Bars == null ? -1 : ChartBars.Bars.Count - 1)
                                + " ob=" + obs.Count + " br=" + brs.Count + " fvg=" + fvgs.Count
                                + " liq=" + liqs.Count + " seg=" + segs.Count + " mtf=" + mtfZ.Count;
                     RenderTarget.DrawText(dbg, Fmt(AobleTextSize.Small, true),
@@ -1644,14 +1645,19 @@ namespace NinjaTrader.NinjaScript.Indicators
                 rSp = (chartControl.GetXByBarIndex(ChartBars, to) - rX0) / (float)(to - from);
                 if (rSp < 0.5f) rSp = 0.5f;
                 pL = ChartPanel.X; pR = ChartPanel.X + ChartPanel.W; pT = ChartPanel.Y; pB = ChartPanel.Y + ChartPanel.H;
-                // THE BLANKING BUG: CurrentBar is a bar-update-context property, not a render-safe one --
-                // it returns CurrentBars[BarsInProgress] for whichever series was last processed. With the
-                // MTF slots on, this indicator adds 60m / 240m / Day / Week series, so in OnRender CurrentBar
-                // was often the WEEK series' bar count (0, 1, 2 on a short history). "last < 2" then returned
-                // before a single zone was painted, which is why the whole overlay vanished while the
-                // indicator stayed loaded and threw nothing. The primary series is the only correct source
-                // here, and rLast is reused by DrawZone instead of CurrentBar for the same reason.
-                rLast = Bars.Count - 1;
+                // THE BLANKING BUG. Measured live: from=923 to=1123 cb=0 bip=5 last=1.
+                // In OnRender BOTH CurrentBar and Bars follow BarsInProgress -- Bars is BarsArray[bip], and
+                // CurrentBar is CurrentBars[bip]. With the MTF slots on this indicator adds 60m/240m/Day/Week
+                // series, so OnRender frequently ran with bip=5 (the WEEK series): CurrentBar 0 and Bars.Count
+                // 2, making "last < 2" return before a single zone was painted. The overlay vanished with the
+                // indicator still loaded and nothing in NT's log, and came back for a moment after a Properties
+                // Apply only because the primary series happened to be the last one processed.
+                // ChartBars.Bars is the series the chart actually displays and is not context-dependent; its
+                // bar indices are also the ones the draw-data lists were built with (OnBarUpdate only fills
+                // them when BarsInProgress == 0), so it is the correct source for every read in here.
+                rBars = ChartBars.Bars;
+                if (rBars == null) return;
+                rLast = rBars.Count - 1;
                 int last = rLast;
                 if (last < 2) return;
                 float xrEdge = Math.Min(X(last + RightPad), pR - 4f);
@@ -1757,8 +1763,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     {
                         string lab = s.Dir == 1 ? "BUY SETUP" : "SELL SETUP";
                         float w = TxtW(lab, AobleTextSize.Small, true) + 10f, h = 17f;
-                        int bi = Math.Min(s.Bar0, Bars.Count - 1);
-                        float yy = s.Dir == 1 ? Y(Bars.GetLow(bi)) + MarkerPx : Y(Bars.GetHigh(bi)) - MarkerPx - h;
+                        int bi = Math.Min(s.Bar0, rLast);
+                        float yy = s.Dir == 1 ? Y(rBars.GetLow(bi)) + MarkerPx : Y(rBars.GetHigh(bi)) - MarkerPx - h;
                         int rgb = s.Dir == 1 ? C(6) : C(7);
                         FillR(xa - w / 2f, yy, xa + w / 2f, yy + h, rgb, 0.8f);
                         Txt(lab, xa - w / 2f + 5f, yy + 2f, AobleTextSize.Small, 0xFFFFFF, 1f, true);
@@ -1795,7 +1801,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void DrawDash(int last)
         {
-            double close = Bars.GetClose(last);
+            double close = rBars != null && last >= 0 && last < rBars.Count ? rBars.GetClose(last) : 0.0;
             string setTxt = "None"; int setCol = C(14);
             if (cur != null && cur.State < 2)
             {
