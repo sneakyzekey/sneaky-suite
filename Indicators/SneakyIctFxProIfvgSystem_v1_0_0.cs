@@ -1422,6 +1422,112 @@ namespace NinjaTrader.NinjaScript.Indicators
             ivOwnBull = StepIfvg(ivOwnBull);
             ivOwnBear = StepIfvg(ivOwnBear);
         }
+        // ── Pine f_sweptLiq ────────────────────────────────────────────────────────────────────────
+        // The swing (or key level) this signal's extreme pushed beyond -- the "$$$". Pine scans its own
+        // bar buffer locally: up to 60 bars back from the extreme, for a candidate that is a strict
+        // pivot within +/-2 bars ("piv") and ideally within +/-5 ("big"), that sits inside the extreme,
+        // taking the nearest such level; then the session / previous-period key levels swept by the same
+        // push. This is NOT the 40-bar "major" BSL/SSL pool engine -- an earlier version of this port
+        // reused those pools, which form only a few times a month and are cleared again on every CISD
+        // confirmation, so the sweep gate rejected virtually every signal and nothing drew on the chart.
+        // a = bars-ago of the signal's extreme (Pine's buffer index "a").
+        private bool FindSweptLiq(int dir, int a, out double lvl, out DateTime lt, out string nm)
+        {
+            bool bear = dir == -1;
+            lvl = double.NaN; lt = Time[0]; nm = "$$$";
+            int nMax = CurrentBar;
+            if (a < 0 || a > nMax) return false;
+            double ext = bear ? High[a] : Low[a];
+            double atrRef = smtAtr > 0 ? smtAtr : TickSize * 10;
+            int kMax = Math.Min(a + 60, nMax - 6);
+            for (int k = a + 2; k <= kMax; k++)
+            {
+                double v = bear ? High[k] : Low[k];
+                bool piv = true, big = true;
+                for (int q = 1; q <= 5; q++)
+                {
+                    if (k - q < 0 || k + q > nMax) { big = false; if (q <= 2) piv = false; continue; }
+                    double l1 = bear ? High[k - q] : Low[k - q];
+                    double l2 = bear ? High[k + q] : Low[k + q];
+                    if (bear ? (l1 > v || l2 > v) : (l1 < v || l2 < v)) { big = false; if (q <= 2) piv = false; }
+                }
+                if (!piv) continue;
+                if (bear ? !(v < ext) : !(v > ext)) continue;                                   // the extreme must have swept it
+                if (!double.IsNaN(lvl) && (bear ? !(v > lvl) : !(v < lvl))) continue;           // keep the nearest one
+                bool eq = false;                                                                 // equal highs / lows within 0.1 ATR
+                for (int k2 = a + 2; k2 <= kMax && !eq; k2++)
+                {
+                    if (k2 == k || Math.Abs(k2 - k) <= 2) continue;
+                    double v2 = bear ? High[k2] : Low[k2];
+                    bool p2 = true;
+                    for (int q = 1; q <= 2 && p2; q++)
+                    {
+                        if (k2 - q < 0 || k2 + q > nMax) { p2 = false; break; }
+                        double m1 = bear ? High[k2 - q] : Low[k2 - q];
+                        double m2 = bear ? High[k2 + q] : Low[k2 + q];
+                        if (bear ? (m1 > v2 || m2 > v2) : (m1 < v2 || m2 < v2)) p2 = false;
+                    }
+                    eq = p2 && Math.Abs(v2 - v) <= 0.1 * atrRef;
+                }
+                if (!(eq || big)) continue;
+                lvl = v; lt = Time[k];
+                nm = eq ? (bear ? "$$$ EQH" : "$$$ EQL") : (bear ? "$$$ SWING H" : "$$$ SWING L");
+            }
+            for (int i = 0; i < ivKP.Count; i++)                                                 // key levels swept by the same push
+            {
+                double v = ivKP[i];
+                if (double.IsNaN(v) || ivKH[i] != bear) continue;
+                if (bear ? !(v < ext) : !(v > ext)) continue;
+                if (!double.IsNaN(lvl) && (bear ? !(v > lvl) : !(v < lvl))) continue;
+                lvl = v; lt = Time[Math.Min(a + 20, nMax)]; nm = "$$$ " + ivKN[i];
+            }
+            return !double.IsNaN(lvl);
+        }
+
+        // ── Pine f_ivTarget ────────────────────────────────────────────────────────────────────────
+        // Nearest untaken liquidity beyond the entry in the trade direction: a +/-2 pivot in the bar
+        // buffer that no candle has taken since, or a key level price has not reached since the extreme.
+        // Again local, not the 40-bar pool list the earlier version of this port used.
+        private bool FindIvTarget(int dir, int a, double entry, out double tg)
+        {
+            bool bear = dir == -1;
+            tg = double.NaN;
+            int nMax = CurrentBar;
+            int lim = Math.Min(nMax - 3, 250);
+            double run = bear ? Low[0] : High[0];
+            for (int k = 1; k <= lim; k++)
+            {
+                double v = bear ? Low[k] : High[k];
+                if (k >= 2)
+                {
+                    bool piv = true;
+                    for (int q = 1; q <= 2 && piv; q++)
+                    {
+                        if (k - q < 0 || k + q > nMax) { piv = false; break; }
+                        double l1 = bear ? Low[k - q] : High[k - q];
+                        double l2 = bear ? Low[k + q] : High[k + q];
+                        if (bear ? (l1 < v || l2 < v) : (l1 > v || l2 > v)) piv = false;
+                    }
+                    bool untaken = bear ? v < run : v > run;
+                    if (piv && untaken && (bear ? v < entry : v > entry) && (double.IsNaN(tg) || (bear ? v > tg : v < tg)))
+                        tg = v;
+                }
+                run = bear ? Math.Min(run, v) : Math.Max(run, v);
+            }
+            double since = bear ? Low[0] : High[0];
+            for (int q = 0; q <= Math.Min(a, nMax); q++)
+                since = bear ? Math.Min(since, Low[q]) : Math.Max(since, High[q]);
+            for (int i = 0; i < ivKP.Count; i++)
+            {
+                double v = ivKP[i];
+                if (double.IsNaN(v) || ivKH[i] == bear) continue;
+                if (!(bear ? (v < since && v < entry) : (v > since && v > entry))) continue;
+                if (!double.IsNaN(tg) && (bear ? !(v > tg) : !(v < tg))) continue;
+                tg = v;
+            }
+            return !double.IsNaN(tg);
+        }
+
         private void TrySpawnIfvg(int dir)
         {
             IctSig existing = dir == 1 ? ivOwnBull : ivOwnBear;
@@ -1457,32 +1563,32 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (dir == -1 && mid < eq) return;   // bearish IFVG wanted only in premium
                 }
             }
-            if (IfvgRequireSweep)
-            {
-                bool sweptRecently = dir == 1 ? (lqSwLoT.HasValue && GetBarsAgo(lqSwLoT.Value) <= IfvgLookback)
-                                               : (lqSwHiT.HasValue && GetBarsAgo(lqSwHiT.Value) <= IfvgLookback);
-                if (!sweptRecently) return;
-            }
-            double tgt = double.NaN; bool tgtHigh = false;
-            for (int i = 0; i < ivPP.Count; i++)
-            {
-                if (dir == 1 && ivPH[i] && ivPP[i] > top && (double.IsNaN(tgt) || ivPP[i] < tgt)) { tgt = ivPP[i]; tgtHigh = true; }
-                if (dir == -1 && !ivPH[i] && ivPP[i] < bot && (double.IsNaN(tgt) || ivPP[i] > tgt)) { tgt = ivPP[i]; tgtHigh = false; }
-            }
-            if (IfvgRequireTarget && double.IsNaN(tgt)) return;
+            // the signal's own extreme: the armed run's low/high, or the one the CISD confirmed on
+            DateTime xT = dir == 1 ? (_aBuOnNow ? _aBuBotTNow : _exLoTNow) : (_aBeOnNow ? _aBeTopTNow : _exHiTNow);
+            if (xT == default(DateTime)) xT = Time[0];
+            int aAgo = Math.Max(0, Math.Min(GetBarsAgo(xT), CurrentBar));
+
+            // Pine f_sweptLiq: the "$$$" this extreme swept (local swing scan + key levels)
+            double swLvl; DateTime swT; string swNm;
+            bool swFound = FindSweptLiq(dir, aAgo, out swLvl, out swT, out swNm);
+            if (IfvgRequireSweep && !swFound) return;
+
+            // Pine f_ivTarget: nearest untaken liquidity beyond the IFVG edge (entry)
+            double entry = dir == 1 ? top : bot;
+            double tgt;
+            bool tgtFound = FindIvTarget(dir, aAgo, entry, out tgt);
+            if (IfvgRequireTarget && !tgtFound) return;
 
             sigSeq++;
-            // the swept liquidity this IFVG reversed from ("$$$"), if the sweep is recent enough
-            bool swRecent = dir == 1 ? (lqSwLoT.HasValue && GetBarsAgo(lqSwLoT.Value) <= IfvgLookback)
-                                     : (lqSwHiT.HasValue && GetBarsAgo(lqSwHiT.Value) <= IfvgLookback);
             var sig = new IctSig
             {
                 Bear = dir == -1,
                 IvTop = top, IvBot = bot, IvBar = bar, IvKey = (top + bot) / 2.0, Spawn = CurrentBar,
-                TgL = tgt, TgHit = false, Gone = false, Swept = false, IvHit = false,
-                SwL = swRecent ? (dir == 1 ? lqSwLoLvl : lqSwHiLvl) : double.NaN,
-                SwT = dir == 1 ? lqSwLoPT : lqSwHiPT,
-                XTime = dir == 1 ? (lqSwLoT ?? Time[0]) : (lqSwHiT ?? Time[0]),
+                TgL = tgtFound ? tgt : double.NaN, TgHit = false, Gone = false, Swept = false, IvHit = false,
+                SwL = swFound ? swLvl : double.NaN,
+                SwT = swT,
+                SwN = swNm,
+                XTime = xT,
                 TgT = Time[0],
                 Tag = "IctIfvg" + sigSeq
             };
