@@ -58,6 +58,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private List<Mark> marks = new List<Mark>();
         private DateTime levelsStamp = DateTime.MinValue, lastCheck = DateTime.MinValue;
         private string levelsInfo = "levels: not loaded";
+        private string gexLevelsPathNote = "", gexProfilePathNote = "";
         private EMA emaTrend; private ATR atrI;
         private StreamWriter rec;
         private double netGex = 0; private bool netGexKnown = false; private Dictionary<int, int> lastGexBar = new Dictionary<int, int>();
@@ -348,12 +349,50 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
 
         // ------------------------------------------------------------------ levels
+        // Falls back to the literal %USERPROFILE%\Documents\NinjaTrader 8 folder when a GEX
+        // data file isn't where NinjaTrader's own Globals.UserDataDir points. fetch_gex_nq.py
+        // writes via Python's os.path.expanduser("~"), which does NOT follow a redirected
+        // Windows Documents folder (e.g. moved onto a D: drive) the way NinjaTrader's own
+        // Known-Folder-aware UserDataDir does -- so on a machine with Documents redirected,
+        // the two can point at different folders unless GEX_DATA_DIR is set to match. This
+        // keeps the chart working either way and reports which folder it actually used.
+        private string ResolveGexFile(string fileName, out string foundNote)
+        {
+            string primaryDir = NinjaTrader.Core.Globals.UserDataDir;
+            string primary = Path.Combine(primaryDir, fileName);
+            if (File.Exists(primary)) { foundNote = ""; return primary; }
+
+            string fallbackDir = null;
+            try
+            {
+                string up = Environment.GetEnvironmentVariable("USERPROFILE");
+                if (!string.IsNullOrEmpty(up)) fallbackDir = Path.Combine(up, "Documents", "NinjaTrader 8");
+            }
+            catch { }
+
+            if (!string.IsNullOrEmpty(fallbackDir) && !string.Equals(fallbackDir, primaryDir, StringComparison.OrdinalIgnoreCase))
+            {
+                string fb = Path.Combine(fallbackDir, fileName);
+                if (File.Exists(fb))
+                {
+                    foundNote = "using " + fileName + " from " + fallbackDir + " (not " + primaryDir + " -- set GEX_DATA_DIR to fix)";
+                    return fb;
+                }
+            }
+
+            foundNote = "";
+            return primary; // neither exists -- let the caller's own "not found" message report this path
+        }
+
         private string ResolvePath()
         {
             if (!string.IsNullOrEmpty(LevelsPath)) return LevelsPath;
             string root = Instrument.MasterInstrument.Name.ToUpperInvariant();
             string tk = (root == "ES" || root == "MES") ? "ES" : ((root == "YM" || root == "MYM") ? "YM" : "NQ");
-            return Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "GexLevels_" + tk + ".csv");
+            string note;
+            string p = ResolveGexFile("GexLevels_" + tk + ".csv", out note);
+            gexLevelsPathNote = note;
+            return p;
         }
 
         private void ReloadLevelsIfNeeded()
@@ -2267,7 +2306,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                 if (act.Count == 0)
                 {
-                    Txt("Waiting for a sweep of a level.  " + levelsInfo, x2, y2, W - pad * 2, 10f * k, CGrey, false);
+                    string pathNote = gexLevelsPathNote.Length > 0 ? gexLevelsPathNote : gexProfilePathNote;
+                    Txt("Waiting for a sweep of a level.  " + levelsInfo + (pathNote.Length > 0 ? "  |  " + pathNote : ""), x2, y2, W - pad * 2, 10f * k, CGrey, false);
                     y2 += 20f * k;
                 }
                 else
@@ -3700,7 +3740,10 @@ private sealed class GexProfileModule : PanelBase
             if (!string.IsNullOrEmpty(ProfilePath)) return ProfilePath;
             string root = Instrument.MasterInstrument.Name.ToUpperInvariant();
             string tk = (root == "ES" || root == "MES") ? "ES" : ((root == "YM" || root == "MYM") ? "YM" : "NQ");
-            return Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "GexProfile_" + tk + ".csv");
+            string note;
+            string p = ResolveGexFile("GexProfile_" + tk + ".csv", out note);
+            gexProfilePathNote = note;
+            return p;
         }
 
         private void ReloadIfNeeded()
@@ -3711,7 +3754,7 @@ private sealed class GexProfileModule : PanelBase
             try
             {
                 string p = ResolvePath();
-                if (!File.Exists(p)) { lock (sync) info = "profile file not found - run the updated fetch_gex_nq.py"; return; }
+                if (!File.Exists(p)) { lock (sync) info = "profile file not found - run the updated fetch_gex_nq.py" + (gexProfilePathNote.Length > 0 ? " (" + gexProfilePathNote + ")" : ""); return; }
                 DateTime st = File.GetLastWriteTimeUtc(p);
                 if (st == stamp && rowsAll.Count > 0) return;
                 stamp = st;
