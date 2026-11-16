@@ -1486,6 +1486,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Dictionary<int, DW.TextFormat> fmtCache = new Dictionary<int, DW.TextFormat>();
         private D2D.StrokeStyle stDash, stDot;
         private int rnCount;
+        private int rLast;
         private float rFrom, rX0, rSp, pL, pR, pT, pB;
         private ChartControl rCtl; private ChartScale rScale;
 
@@ -1608,7 +1609,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 float yt = Math.Min(y1, y2), h = Math.Abs(y2 - y1);
                 float ty = yt + (h - FontPx(ZoneTxtSize)) / 2f - 2f;
                 if (LblMode == AobleLabelMode.ZoneStart) Txt(z.Text, Math.Max(xl, pL) + 3f, ty, ZoneTxtSize, C(14), 1f, false);
-                else if (z.End < 0) { float tx = Math.Min(X(CurrentBar + RightPad), pR - TxtW(z.Text, ZoneTxtSize, false)); Txt(z.Text, tx, ty, ZoneTxtSize, rgb, 1f, false); }
+                else if (z.End < 0) { float tx = Math.Min(X(rLast + RightPad), pR - TxtW(z.Text, ZoneTxtSize, false)); Txt(z.Text, tx, ty, ZoneTxtSize, rgb, 1f, false); }
             }
         }
 
@@ -1627,11 +1628,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 try
                 {
                     string dbg = "AOBLE r" + (++rnCount) + " from=" + from + " to=" + to
-                               + " cb=" + CurrentBar + " bars=" + Bars.Count
+                               + " cb=" + CurrentBar + " bip=" + BarsInProgress + " last=" + (Bars.Count - 1)
                                + " ob=" + obs.Count + " br=" + brs.Count + " fvg=" + fvgs.Count
                                + " liq=" + liqs.Count + " seg=" + segs.Count + " mtf=" + mtfZ.Count;
                     RenderTarget.DrawText(dbg, Fmt(AobleTextSize.Small, true),
-                        new SharpDX.RectangleF(ChartPanel.X + 6f, ChartPanel.Y + 6f, 900f, 18f), Br(0xFFEA00, 1f));
+                        new SharpDX.RectangleF(ChartPanel.X + 6f, ChartPanel.Y + 26f, 900f, 18f), Br(0xFFEA00, 1f));
                 }
                 catch { }
             }
@@ -1643,7 +1644,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                 rSp = (chartControl.GetXByBarIndex(ChartBars, to) - rX0) / (float)(to - from);
                 if (rSp < 0.5f) rSp = 0.5f;
                 pL = ChartPanel.X; pR = ChartPanel.X + ChartPanel.W; pT = ChartPanel.Y; pB = ChartPanel.Y + ChartPanel.H;
-                int last = Math.Min(CurrentBar, Bars.Count - 1);
+                // THE BLANKING BUG: CurrentBar is a bar-update-context property, not a render-safe one --
+                // it returns CurrentBars[BarsInProgress] for whichever series was last processed. With the
+                // MTF slots on, this indicator adds 60m / 240m / Day / Week series, so in OnRender CurrentBar
+                // was often the WEEK series' bar count (0, 1, 2 on a short history). "last < 2" then returned
+                // before a single zone was painted, which is why the whole overlay vanished while the
+                // indicator stayed loaded and threw nothing. The primary series is the only correct source
+                // here, and rLast is reused by DrawZone instead of CurrentBar for the same reason.
+                rLast = Bars.Count - 1;
+                int last = rLast;
                 if (last < 2) return;
                 float xrEdge = Math.Min(X(last + RightPad), pR - 4f);
 
