@@ -2115,21 +2115,25 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         // This HUD manages all its own settings through its own WPF panel rather than NinjaTrader's
-        // Properties grid, so none of them actually carry [NinjaScriptProperty] -- that attribute
-        // doesn't appear anywhere in this file. The real tell for "this is one of the HUD's own
-        // settings" is [Display(...)] (the ones shown in the grid anyway, for completeness/defaults)
-        // or [Browsable(false)] (the extra AutoLongSource2..10 / AutoShortSource2..10 slots, hidden
-        // from the grid on purpose because there can be up to 10 of them). Filtering on
-        // NinjaScriptPropertyAttribute instead matched nothing, so SaveTemplate/LoadTemplate were
-        // silently saving and restoring zero properties -- only __AccountOverride ever took effect,
-        // which is exactly why cycling templates looked like it did nothing to the AUTO TRADE rows.
+        // Properties grid, so none of them carry [NinjaScriptProperty] -- filtering on that attribute
+        // matched nothing, so SaveTemplate/LoadTemplate silently saved and restored zero properties
+        // (only __AccountOverride, handled separately, ever took effect -- confirmed by reading the
+        // actual saved .txt files back off disk: header line + __AccountOverride, nothing else).
+        // A follow-up filter on [Display(...)] / [Browsable(false)] -- the attributes these settings
+        // DO carry -- *also* came back empty at runtime even though it matched correctly in an
+        // isolated reflection test, so something about how NinjaScript's own compiled assembly
+        // resolves/attaches those attributes at runtime isn't what a plain file-local test predicts.
+        // Rather than chase that further, this drops attribute matching entirely: every public,
+        // readable+writable, non-indexer property actually DECLARED on SneakyTradeHUD itself (as
+        // opposed to inherited from Indicator/NinjaScriptBase -- Name, Plots, IsOverlay, etc., which
+        // all have a different DeclaringType) is, one for one, a HUD setting -- verified by listing
+        // every such property in the source (Corner ... AutoTrailStartPoints): there are no
+        // extraneous ones. DeclaringType alone is therefore both correct and the most robust check.
         private PropertyInfo[] TemplateProps()
         {
             return GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0
-                            && p.DeclaringType == typeof(SneakyTradeHUD)
-                            && (p.GetCustomAttributes(typeof(DisplayAttribute), true).Length > 0
-                                || p.GetCustomAttributes(typeof(BrowsableAttribute), true).Any(a => !((BrowsableAttribute)a).Browsable)))
+                            && p.DeclaringType == typeof(SneakyTradeHUD))
                 .ToArray();
         }
 
@@ -2152,10 +2156,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 string path = Path.Combine(TemplatesDir(), SafeFileName(name) + ".txt");
+                PropertyInfo[] tplProps = TemplateProps();
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine("# SneakyTradeHUD template \"" + name + "\" -- saved " + DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+                sb.AppendLine("# SneakyTradeHUD template \"" + name + "\" -- saved " + DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)
+                              + " -- " + tplProps.Length + " properties");
                 sb.AppendLine("__AccountOverride=" + overrideName);
-                foreach (PropertyInfo p in TemplateProps())
+                foreach (PropertyInfo p in tplProps)
                 {
                     object v;
                     try { v = p.GetValue(this, null); } catch { continue; }
