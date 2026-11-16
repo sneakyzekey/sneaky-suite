@@ -261,7 +261,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
         private volatile bool autoOn; private Account autoAcct;
-        private int oppAction, autoEvalBar = -1, autoEvalDue, autoTrades, revDir; private DateTime autoDay = DateTime.MinValue, revUntil, closeStart;
+        private int oppAction, autoEvalBar = -1, autoEvalDue, revDir; private DateTime autoDay = DateTime.MinValue, revUntil, closeStart;
+        // auto-trade counter: per ACCOUNT, and per trading SESSION rather than per calendar day.
+        // Counting globally meant trades the HUD placed on one account blocked every other account,
+        // and resetting on local midnight meant the evening session (which opens at 18:00 ET) started
+        // already carrying the day session's count. Key = account name, value = entries this session.
+        private readonly Dictionary<string, int> autoTradesAcct = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private readonly object tradeCntLock = new object();
+        private DateTime autoSession = DateTime.MinValue;
         // "Require break of signal bar" bookkeeping: a signal that's waiting for a LATER bar to break its own signal bar's high/low
         private bool sigPendActive; private int sigPendDir, sigPendBar; private double sigPendHigh, sigPendLow;
         private bool closing, closeSent;
@@ -340,7 +347,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AutoLongSource1 = ""; AutoLongRule1 = 0; AutoLongValue1 = 0;
                 AutoShortSource1 = ""; AutoShortRule1 = 1; AutoShortValue1 = 0;
                 HudScale = 0.55; BodyMaxHeight = 560; AutoOpposite = SneakyHudOpposite.Ignore;
-                AutoMaxTradesPerDay = 10; AutoStartHHmm = 0; AutoEndHHmm = 0; AutoDailyLossLimit = 0;
+                AutoMaxTradesPerDay = 10; AutoSessionResetHHmm = 1800; AutoStartHHmm = 0; AutoEndHHmm = 0; AutoDailyLossLimit = 0;
                 AutoTradeSide = SneakyHudAutoSide.Both; AutoRequireBreakOfSignalBar = false; AutoBreakMaxBars = 20; AutoRequireConsecutiveBars = false; AutoConsecutiveBarsCount = 2;
                 TrailAtrPeriod = 14; TrailAtrMult = 2.0; TrailBars = 3; TrailBarOffsetTicks = 2; ChandelierMult = 3.0;
                 TrailEmaPeriod = 21; TrailEmaOffsetTicks = 4; TrailPercent = 50; TrailStepPoints = 10.0;
@@ -1341,12 +1348,43 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             return true;
         }
+        // The trading day a timestamp belongs to. The CME session reopens at AutoSessionResetHHmm (18:00 by
+        // default), so anything at or after that time counts toward the NEXT calendar day's session.
+        private DateTime SessionDayOf(DateTime now)
+        {
+            int hm = now.Hour * 100 + now.Minute;
+            return hm >= AutoSessionResetHHmm ? now.Date.AddDays(1) : now.Date;
+        }
+        // Clears every account's count when the session rolls. Safe to call from either thread.
+        private void RollSessionIfNeeded(DateTime now)
+        {
+            DateTime sd = SessionDayOf(now);
+            lock (tradeCntLock)
+            {
+                if (sd == autoSession) return;
+                autoSession = sd; autoTradesAcct.Clear(); autoDay = sd;
+            }
+        }
+        private int TradesOn(Account a)
+        {
+            if (a == null) return 0;
+            lock (tradeCntLock) { int n; return autoTradesAcct.TryGetValue(a.Name, out n) ? n : 0; }
+        }
+        private int BumpTrades(Account a)
+        {
+            if (a == null) return 0;
+            lock (tradeCntLock)
+            {
+                int n; autoTradesAcct.TryGetValue(a.Name, out n); n++; autoTradesAcct[a.Name] = n; return n;
+            }
+        }
+
         // acts on a (possibly deferred) LONG/SHORT signal: reverse/close on an opposite open trade, or enter flat
         private void HandleAutoSignal(Account a, int dir)
         {
             string sig = (dir > 0 ? "LONG" : "SHORT") + " signal";
             DateTime now = DateTime.Now;
-            if (now.Date != autoDay) { autoDay = now.Date; autoTrades = 0; }
+            RollSessionIfNeeded(now);
             Position p = FindPos(a);
             if (p != null)
             {
@@ -1359,11 +1397,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
             if (!AutoMayEnter(a, now, sig)) return;
-            if (SubmitEntry(a, dir, false, "AUTO " + sig + ": ")) { autoTrades++; AutoSay(sig + " -> entered (" + autoTrades + (AutoMaxTradesPerDay > 0 ? "/" + AutoMaxTradesPerDay : "") + " today)"); }
+            if (SubmitEntry(a, dir, false, "AUTO " + sig + ": ")) { int n = BumpTrades(a); AutoSay(sig + " -> entered on " + a.Name + " (" + n + (AutoMaxTradesPerDay > 0 ? "/" + AutoMaxTradesPerDay : "") + " this session)"); }
         }
         private bool AutoMayEnter(Account a, DateTime now, string sig)
         {
-            if (AutoMaxTradesPerDay > 0 && autoTrades >= AutoMaxTradesPerDay) { AutoSay(sig + " skipped - max trades per day (" + AutoMaxTradesPerDay + ") reached"); return false; }
+            RollSessionIfNeeded(now);
+            if (AutoMaxTradesPerDay > 0 && TradesOn(a) >= AutoMaxTradesPerDay) { AutoSay(sig + " skipped - " + a.Name + " hit max trades per session (" + AutoMaxTradesPerDay + ")"); return false; }
             if (AutoStartHHmm != AutoEndHHmm)
             {
                 int hm = now.Hour * 100 + now.Minute;
@@ -1423,7 +1462,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 else if (FindPos(a) == null && !pendActive)
                 {
                     int d = revDir; revDir = 0;
-                    if (SubmitEntry(a, d, false, "AUTO reverse: ")) { autoTrades++; AutoSay("reversed to " + (d > 0 ? "LONG" : "SHORT")); }
+                    if (SubmitEntry(a, d, false, "AUTO reverse: ")) { BumpTrades(a); AutoSay("reversed to " + (d > 0 ? "LONG" : "SHORT") + " on " + a.Name); }
                 }
             }
         }
@@ -2108,7 +2147,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                         btnReqConsec.Foreground = AutoRequireConsecutiveBars ? Amber : FgMain; btnReqConsec.FontWeight = AutoRequireConsecutiveBars ? FontWeights.Bold : FontWeights.Normal;
                     }
                     if (lblConsecCount != null) lblConsecCount.Text = AutoConsecutiveBarsCount.ToString();
-                    string lim = (AutoMaxTradesPerDay > 0 ? "trades today " + autoTrades + "/" + AutoMaxTradesPerDay : "trades today " + autoTrades)
+                    Account accUi = acct; int cnt = TradesOn(accUi); string accNm = accUi == null ? "no account" : accUi.Name;
+                    string lim = (AutoMaxTradesPerDay > 0 ? "trades this session " + cnt + "/" + AutoMaxTradesPerDay : "trades this session " + cnt) + " on " + accNm
                                + (AutoStartHHmm != AutoEndHHmm ? "   window " + AutoStartHHmm.ToString("0000") + "-" + AutoEndHHmm.ToString("0000") : "");
                     lblAutoInfo.Text = (autoOn ? lim : "off  |  " + lim) + (autoNote.Length > 0 ? "\n" + autoNote : "");
                 }
@@ -2386,8 +2426,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         public SneakyHudOpposite AutoOpposite { get; set; }
 
         [Range(0, 1000)]
-        [Display(Name = "Max auto trades per day (0 = no limit)", GroupName = "6. Auto trade", Order = 6)]
+        [Display(Name = "Max auto trades per session, per account (0 = no limit)", GroupName = "6. Auto trade", Order = 6)]
         public int AutoMaxTradesPerDay { get; set; }
+
+        [Range(0, 2359)]
+        [Display(Name = "Session reset time (HHmm, 1800 = CME reopen)", Description = "The trade counter clears at this time each day instead of at midnight, so the evening session does not inherit the day session's count. Counted separately for each account.", GroupName = "6. Auto trade", Order = 7)]
+        public int AutoSessionResetHHmm { get; set; }
 
         [Range(0, 2359)]
         [Display(Name = "Trade from (HHmm, PC clock)", Description = "Auto entries only between From and To. Leave both at 0 for no time limit.", GroupName = "6. Auto trade", Order = 7)]
