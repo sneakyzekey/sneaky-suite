@@ -79,8 +79,10 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -107,7 +109,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // ── live state ──
         private volatile Account acct;
-        private string overrideName = "";            // "" = AUTO
+        private string overrideName = "";            // "" = not picked yet (never "AUTO" any more -- see ResolveAccount)
+        private bool autoPicked = false;             // true once a one-time starting guess has been made
         private double lastPx, bidPx, askPx;
         private bool autoBE, autoTrail, beDone;
         private int lastAuto;
@@ -288,7 +291,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Border root;
         private StackPanel body;
         private TextBlock lblPos, lblOpen, lblDetail, lblSession, lblOrders, lblStatus;
-        private Button btnAcct, btnCollapse, btnAutoBE, btnAutoTrail, btnDock;
+        private Button btnAcct, btnCollapse, btnAutoBE, btnAutoTrail, btnDock, btnTmpl, btnTmplDeleteRef;
+        private string currentTemplateName = "";
         private DispatcherTimer uiTimer;
         private bool dragging, collapsed;
         private Point dragStart;
@@ -313,6 +317,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static readonly Brush Green   = B("#2ECC71");
         private static readonly Brush Red     = B("#E74C3C");
         private static readonly Brush Amber   = B("#F2B134");
+
+        // Re-derives every local working field from the current [NinjaScriptProperty] values.
+        // Runs once at State.Historical (normal indicator startup), and again after a template is
+        // loaded on a live chart, so both paths end up with exactly the same state.
+        private void ResyncFromProperties()
+        {
+            stopGuard = StopGuardDefault;
+            trailMode = (int)TrailModeDefault;
+            entQty = Math.Max(1, EntryQty); entSl = Math.Max(1, EntryStopTicks); entTp = Math.Max(0, EntryTargetTicks);
+            oppAction = (int)AutoOpposite;
+            longSlotCount = Math.Max(1, Math.Min(MaxAutoSlots, AutoLongSlotCount == 0 ? 1 : AutoLongSlotCount));
+            shortSlotCount = Math.Max(1, Math.Min(MaxAutoSlots, AutoShortSlotCount == 0 ? 1 : AutoShortSlotCount));
+            for (int i = 0; i < MaxAutoSlots; i++)
+            {
+                ruleLong[i] = Math.Max(0, Math.Min(3, GetRuleProp(true, i))); valLong[i] = GetValueProp(true, i);
+                ruleShort[i] = Math.Max(0, Math.Min(3, GetRuleProp(false, i))); valShort[i] = GetValueProp(false, i);
+            }
+            try { trailTicks = Math.Max(1, (int)Math.Round(TrailPoints / Tk)); stepTicks = Math.Max(1, (int)Math.Round(TrailStepPoints / Tk)); } catch { }
+            atrMultX10 = Math.Max(1, (int)Math.Round(TrailAtrMult * 10)); chandMultX10 = Math.Max(1, (int)Math.Round(ChandelierMult * 10));
+            trailBars = Math.Max(1, TrailBars); emaOffTicks = TrailEmaOffsetTicks; trailPct = Math.Max(5, Math.Min(95, TrailPercent));
+            try { beTicks = (int)Math.Round(BeOffsetPoints / Tk); } catch { beTicks = 0; }
+            slTicks = Math.Max(1, SlFromPriceTicks); tpTicks = Math.Max(1, TpFromPriceTicks);
+            flatKeep = FlattenKeepsStrategies;
+        }
 
         protected override void OnStateChange()
         {
@@ -362,23 +390,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.Historical)
             {
-                stopGuard = StopGuardDefault;
-                trailMode = (int)TrailModeDefault;
-                entQty = Math.Max(1, EntryQty); entSl = Math.Max(1, EntryStopTicks); entTp = Math.Max(0, EntryTargetTicks);
-                oppAction = (int)AutoOpposite;
-                longSlotCount = Math.Max(1, Math.Min(MaxAutoSlots, AutoLongSlotCount == 0 ? 1 : AutoLongSlotCount));
-                shortSlotCount = Math.Max(1, Math.Min(MaxAutoSlots, AutoShortSlotCount == 0 ? 1 : AutoShortSlotCount));
-                for (int i = 0; i < MaxAutoSlots; i++)
-                {
-                    ruleLong[i] = Math.Max(0, Math.Min(3, GetRuleProp(true, i))); valLong[i] = GetValueProp(true, i);
-                    ruleShort[i] = Math.Max(0, Math.Min(3, GetRuleProp(false, i))); valShort[i] = GetValueProp(false, i);
-                }
-                try { trailTicks = Math.Max(1, (int)Math.Round(TrailPoints / Tk)); stepTicks = Math.Max(1, (int)Math.Round(TrailStepPoints / Tk)); } catch { }
-                atrMultX10 = Math.Max(1, (int)Math.Round(TrailAtrMult * 10)); chandMultX10 = Math.Max(1, (int)Math.Round(ChandelierMult * 10));
-                trailBars = Math.Max(1, TrailBars); emaOffTicks = TrailEmaOffsetTicks; trailPct = Math.Max(5, Math.Min(95, TrailPercent));
-                try { beTicks = (int)Math.Round(BeOffsetPoints / Tk); } catch { beTicks = 0; }
-                slTicks = Math.Max(1, SlFromPriceTicks); tpTicks = Math.Max(1, TpFromPriceTicks);
-                flatKeep = FlattenKeepsStrategies;
+                ResyncFromProperties();
                 if (ChartControl != null)
                     ChartControl.Dispatcher.InvokeAsync(new Action(BuildUi));
             }
@@ -522,27 +534,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             return l;
         }
 
-        // ── which account are we managing? (call from UI thread) ──
-        private Account ChartTraderAccount()
-        {
-            try
-            {
-                NTWindow w = Window.GetWindow(ChartControl) as NTWindow;
-                if (w == null) return null;
-                DependencyObject d = w.FindFirst("ChartWindowChartTraderControl");
-                if (d == null) return null;
-                PropertyInfo pi = d.GetType().GetProperty("Account");
-                if (pi != null)
-                {
-                    Account a = pi.GetValue(d, null) as Account;
-                    if (a != null) return a;
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        // Finds Chart Trader's own content Grid via the same internal hook ChartTraderAccount() uses.
+        // Finds Chart Trader's own content Grid via the same internal reflection hook that used to
+        // back account resolution (removed -- see ResolveAccount). Still used for docking the HUD
         // Internal/undocumented -- can return null if Chart Trader isn't open on this chart, or if a
         // future NT8 update renames/restructures it. Callers must treat null as "not available" and
         // fall back gracefully, never assume this keeps working.
@@ -589,21 +582,26 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch { chartTraderGrid = null; chartTraderRowDef = null; return false; }
         }
 
+        // Used only once, to guess a sensible starting account before the user has made an explicit
+        // pick (see autoPicked in UpdateUi). This used to also fall back to whatever Chart Trader
+        // currently resolved to, via reflection, every UI tick -- that silent "whatever the panel
+        // isn't necessarily showing" value is exactly how 10 auto-trade entries once reached Sim120
+        // while the HUD read FLAT (Sim100). Account selection is now always explicit: click "Acct:"
+        // to cycle to the one you want. This only picks a reasonable starting point.
         private Account ResolveAccount()
         {
-            if (overrideName.Length > 0) return FindAcct(overrideName);
-            Account ct = ChartTraderAccount();
-            if (ct != null) return ct;
             try
             {
                 lock (Account.All)
                 {
                     foreach (Account a in Account.All)
                         if (a != null && IsConnected(a) && FindPos(a) != null) return a;
+                    foreach (Account a in Account.All)
+                        if (a != null && IsConnected(a)) return a;
                 }
             }
             catch { }
-            return FindAcct("Sim101");
+            return null;
         }
 
         // ═════════════════ order actions ═════════════════
@@ -1758,7 +1756,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Grid.SetColumn(btnDock, 1); head.Children.Add(btnDock);
                 btnSize = MkBtn("100%", "Shrink / grow the whole panel. Shift-click to go the other direction. (Setting: HUD size)", delegate { CycleSize(1); }, 0);
                 Grid.SetColumn(btnSize, 2); head.Children.Add(btnSize);
-                btnAcct = MkBtn("Acct: AUTO", "Click to cycle account: AUTO / each connected account", delegate { CycleAccount(); }, 0);
+                btnAcct = MkBtn("Acct: ...", "Click to cycle through each connected account.", delegate { CycleAccount(); }, 0);
                 Grid.SetColumn(btnAcct, 3); head.Children.Add(btnAcct);
                 btnCollapse = MkBtn("–", "Collapse / expand", delegate { ToggleCollapse(); }, 26);
                 Grid.SetColumn(btnCollapse, 4); head.Children.Add(btnCollapse);
@@ -1783,6 +1781,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 lblOrders = Lbl(11, FgDim, FontWeights.Normal);
                 body.Children.Add(lblPos); body.Children.Add(lblOpen); body.Children.Add(lblDetail);
                 body.Children.Add(lblSession); body.Children.Add(lblOrders);
+
+                body.Children.Add(Section("TEMPLATE  (all settings below, per saved name)"));
+                var rTmpl = Row(2);
+                btnTmpl = MkBtn("Tmpl: (none)", "Cycles through your saved templates for this indicator and loads the one shown. Saved under NinjaTrader 8\\SneakyTemplates\\TradeHUD.",
+                    delegate { CycleTemplate(); }, 0);
+                rTmpl.Children.Add(btnTmpl);
+                Button btnTmplSave = MkBtn("Save as...", "Saves every setting on this HUD (entry sizing, auto-trade signal plots, trailing mode, the account picked, etc.) under a name you choose, so it can be reloaded after NinjaTrader restarts.",
+                    delegate { PromptSaveTemplate(); }, 0);
+                rTmpl.Children.Add(btnTmplSave);
+                body.Children.Add(rTmpl);
+                var rTmpl2 = Row(1);
+                Button btnTmplDelete = MkBtn("Delete template", "Deletes the template currently shown in \"Tmpl:\".", delegate { DeleteTemplate(); }, 0);
+                btnTmplDeleteRef = btnTmplDelete;
+                rTmpl2.Children.Add(btnTmplDelete);
+                body.Children.Add(rTmpl2);
 
                 if (ShowEntry)
                 {
@@ -2063,7 +2076,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void CycleAccount()
         {
             List<string> names = new List<string>();
-            names.Add("");   // AUTO
             try
             {
                 lock (Account.All)
@@ -2073,10 +2085,173 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
             }
             catch { }
+            if (names.Count == 0) { SetStatus("No connected accounts to pick from."); return; }
             int i = names.FindIndex(n => string.Equals(n, overrideName, StringComparison.OrdinalIgnoreCase));
             overrideName = names[(i + 1) % names.Count];
-            acct = ResolveAccount();
-            SetStatus("Managing account: " + (overrideName.Length == 0 ? "AUTO (" + (acct == null ? "none" : acct.Name) + ")" : overrideName));
+            autoPicked = true;
+            acct = FindAcct(overrideName);
+            SetStatus("Managing account: " + overrideName);
+        }
+
+        // ═════════════════ templates (save / load every setting under a name) ═════════════════
+        // Everything the HUD exposes as a [NinjaScriptProperty] already survives a NinjaTrader chart
+        // template / workspace save -- but that saves and restores an entire chart at once, which is
+        // clunky when you just want to flip one indicator between a couple of named setups. This saves
+        // a plain text file per name under NinjaTrader 8\SneakyTemplates\TradeHUD, so re-setting up a
+        // chart after restarting NinjaTrader is a two-click "Tmpl:" cycle instead of re-picking every
+        // plot, qty, stop/target and account by hand.
+        private static string TemplatesDir()
+        {
+            string d = Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "SneakyTemplates", "TradeHUD");
+            try { Directory.CreateDirectory(d); } catch { }
+            return d;
+        }
+
+        private static string SafeFileName(string name)
+        {
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in name) sb.Append(Array.IndexOf(Path.GetInvalidFileNameChars(), c) >= 0 ? '_' : c);
+            return sb.ToString().Trim();
+        }
+
+        private PropertyInfo[] TemplateProps()
+        {
+            return GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0
+                            && p.GetCustomAttributes(typeof(NinjaScriptPropertyAttribute), true).Length > 0)
+                .ToArray();
+        }
+
+        private List<string> ListTemplates()
+        {
+            List<string> names = new List<string>();
+            try
+            {
+                foreach (string f in Directory.GetFiles(TemplatesDir(), "*.txt"))
+                    names.Add(Path.GetFileNameWithoutExtension(f));
+            }
+            catch { }
+            names.Sort(StringComparer.OrdinalIgnoreCase);
+            return names;
+        }
+
+        private void SaveTemplate(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+            try
+            {
+                string path = Path.Combine(TemplatesDir(), SafeFileName(name) + ".txt");
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("# SneakyTradeHUD template \"" + name + "\" -- saved " + DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+                sb.AppendLine("__AccountOverride=" + overrideName);
+                foreach (PropertyInfo p in TemplateProps())
+                {
+                    object v;
+                    try { v = p.GetValue(this, null); } catch { continue; }
+                    string s = v == null ? "" : (v is double dv ? dv.ToString("R", CultureInfo.InvariantCulture) : Convert.ToString(v, CultureInfo.InvariantCulture));
+                    sb.AppendLine(p.Name + "=" + s);
+                }
+                File.WriteAllText(path, sb.ToString());
+                currentTemplateName = name;
+                SetStatus("Saved template \"" + name + "\".");
+                UpdateUi();
+            }
+            catch (Exception ex) { SetStatus("Save template failed: " + ex.Message); }
+        }
+
+        private void LoadTemplate(string name)
+        {
+            try
+            {
+                string path = Path.Combine(TemplatesDir(), SafeFileName(name) + ".txt");
+                if (!File.Exists(path)) { SetStatus("Template \"" + name + "\" not found."); return; }
+                Dictionary<string, PropertyInfo> props = TemplateProps().ToDictionary(p => p.Name, p => p, StringComparer.OrdinalIgnoreCase);
+                foreach (string raw in File.ReadAllLines(path))
+                {
+                    string line = raw.Trim();
+                    if (line.Length == 0 || line.StartsWith("#")) continue;
+                    int eq = line.IndexOf('=');
+                    if (eq < 0) continue;
+                    string k = line.Substring(0, eq), v = line.Substring(eq + 1);
+                    if (string.Equals(k, "__AccountOverride", StringComparison.OrdinalIgnoreCase)) { overrideName = v; autoPicked = true; continue; }
+                    PropertyInfo p;
+                    if (!props.TryGetValue(k, out p)) continue;
+                    try
+                    {
+                        if (p.PropertyType.IsEnum) p.SetValue(this, Enum.Parse(p.PropertyType, v), null);
+                        else if (p.PropertyType == typeof(bool)) p.SetValue(this, bool.Parse(v), null);
+                        else if (p.PropertyType == typeof(int)) p.SetValue(this, int.Parse(v, CultureInfo.InvariantCulture), null);
+                        else if (p.PropertyType == typeof(double)) p.SetValue(this, double.Parse(v, NumberStyles.Float, CultureInfo.InvariantCulture), null);
+                        else p.SetValue(this, v, null);
+                    }
+                    catch { }
+                }
+                currentTemplateName = name;
+                if (autoOn) { autoOn = false; SetStatus("AUTO TRADE switched OFF -- a template was loaded."); }
+                ResyncFromProperties();
+                acct = FindAcct(overrideName);
+                TearDownUi();
+                BuildUi();
+                FillCombos();
+                UpdateUi();
+                SetStatus("Loaded template \"" + name + "\".");
+            }
+            catch (Exception ex) { SetStatus("Load template failed: " + ex.Message); }
+        }
+
+        private void DeleteTemplate()
+        {
+            if (currentTemplateName.Length == 0) { SetStatus("No template selected to delete."); return; }
+            try
+            {
+                string path = Path.Combine(TemplatesDir(), SafeFileName(currentTemplateName) + ".txt");
+                if (File.Exists(path)) File.Delete(path);
+                SetStatus("Deleted template \"" + currentTemplateName + "\".");
+                currentTemplateName = "";
+                UpdateUi();
+            }
+            catch (Exception ex) { SetStatus("Delete template failed: " + ex.Message); }
+        }
+
+        private void CycleTemplate()
+        {
+            List<string> names = ListTemplates();
+            if (names.Count == 0) { SetStatus("No saved templates yet. Click \"Save as...\" to create one."); return; }
+            int i = names.FindIndex(n => string.Equals(n, currentTemplateName, StringComparison.OrdinalIgnoreCase));
+            string next = names[(i + 1) % names.Count];
+            LoadTemplate(next);
+        }
+
+        // Small modal text-input dialog -- NinjaScript indicators have no built-in prompt, so this is a
+        // minimal hand-built one (OK / Cancel + a single TextBox), used only for naming a template.
+        private string PromptText(string title, string label, string initial)
+        {
+            Window w = new Window();
+            w.Title = title; w.Width = 360; w.Height = 150; w.ResizeMode = ResizeMode.NoResize;
+            w.WindowStartupLocation = WindowStartupLocation.CenterScreen; w.Topmost = true;
+            if (ChartControl != null) { try { w.Owner = Window.GetWindow(ChartControl); } catch { } }
+            StackPanel sp = new StackPanel(); sp.Margin = new Thickness(12);
+            TextBlock l = new TextBlock(); l.Text = label; l.Margin = new Thickness(0, 0, 0, 6);
+            TextBox tb = new TextBox(); tb.Text = initial ?? ""; tb.Margin = new Thickness(0, 0, 0, 10);
+            StackPanel btns = new StackPanel(); btns.Orientation = Orientation.Horizontal; btns.HorizontalAlignment = HorizontalAlignment.Right;
+            Button ok = new Button(); ok.Content = "OK"; ok.Width = 70; ok.Margin = new Thickness(0, 0, 6, 0); ok.IsDefault = true;
+            Button cancel = new Button(); cancel.Content = "Cancel"; cancel.Width = 70; cancel.IsCancel = true;
+            bool accepted = false;
+            ok.Click += delegate { accepted = true; w.Close(); };
+            cancel.Click += delegate { w.Close(); };
+            btns.Children.Add(ok); btns.Children.Add(cancel);
+            sp.Children.Add(l); sp.Children.Add(tb); sp.Children.Add(btns);
+            w.Content = sp;
+            tb.Focus(); tb.SelectAll();
+            w.ShowDialog();
+            return accepted ? tb.Text.Trim() : null;
+        }
+
+        private void PromptSaveTemplate()
+        {
+            string name = PromptText("Save SneakyTradeHUD template", "Template name:", currentTemplateName.Length > 0 ? currentTemplateName : Instrument.MasterInstrument.Name);
+            if (string.IsNullOrWhiteSpace(name)) return;
+            SaveTemplate(name.Trim());
         }
 
         private static string Money(double v)
@@ -2089,16 +2264,26 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 if (root == null) return;
-                // AutoEvaluate trades autoAcct, which ToggleAuto froze when AUTO was switched on, but this
-                // used to re-resolve acct every tick -- so the panel could show one account (whatever Chart
-                // Trader currently resolves to) while auto entries were going to another. That is exactly how
-                // 10 entries reached Sim120 while the HUD read "FLAT (Sim100)". While AUTO is armed the panel
-                // now follows the armed account, and any divergence is reported instead of hidden.
-                Account resolvedAcct = ResolveAccount();
+                // Account selection is explicit (overrideName, set only by clicking "Acct:") -- no more
+                // reflection-based re-resolution against Chart Trader every tick. That reflection path
+                // used to let the panel show one account while auto entries silently went to another;
+                // that's exactly how 10 entries once reached Sim120 while the HUD read "FLAT (Sim100)".
+                // One-time exception: if nothing has been picked yet, guess a starting account so the
+                // HUD isn't blank on first load.
+                if (overrideName.Length == 0 && !autoPicked)
+                {
+                    autoPicked = true;
+                    Account guess = ResolveAccount();
+                    if (guess != null) overrideName = guess.Name;
+                }
+                Account resolvedAcct = FindAcct(overrideName);
+                // AutoEvaluate trades autoAcct, which ToggleAuto froze when AUTO was switched on. If the
+                // user clicks "Acct:" to a different account while AUTO is still armed, that's reported
+                // here instead of silently moving where auto entries go.
                 if (autoOn && autoAcct != null)
                 {
                     acctDriftNote = ReferenceEquals(resolvedAcct, autoAcct) ? ""
-                        : "AUTO is trading " + autoAcct.Name + "  -  Chart Trader now resolves to "
+                        : "AUTO is trading " + autoAcct.Name + "  -  Acct is now set to "
                           + (resolvedAcct == null ? "nothing" : resolvedAcct.Name) + ". Switch AUTO off and on to move it.";
                     acct = autoAcct;
                 }
@@ -2112,8 +2297,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (gp != null) foreach (Order so in ExitOrders(a, Dir(gp), true)) GuardCheck(a, so);
                 }
 
-                btnAcct.Content = "Acct: " + (overrideName.Length == 0 ? "AUTO" : "") + (a == null ? (overrideName.Length == 0 ? "" : "?") : (overrideName.Length == 0 ? "" : a.Name));
-                if (overrideName.Length == 0) btnAcct.ToolTip = "Managing: " + (a == null ? "none" : a.Name) + " (click to cycle)";
+                btnAcct.Content = "Acct: " + (overrideName.Length == 0 ? "(none)" : (a == null ? overrideName + "?" : a.Name));
+                btnAcct.ToolTip = overrideName.Length == 0
+                    ? "No connected accounts found. Click to retry, or connect an account and reload the indicator."
+                    : "Managing: " + (a == null ? overrideName + " (not connected)" : a.Name) + " (click to cycle)";
+                if (btnTmpl != null) btnTmpl.Content = "Tmpl: " + (currentTemplateName.Length == 0 ? "(none)" : currentTemplateName);
+                if (btnTmplDeleteRef != null) btnTmplDeleteRef.Content = currentTemplateName.Length == 0 ? "Delete template" : "Delete \"" + currentTemplateName + "\"";
                 btnAutoBE.Content = "Auto BE: " + (autoBE ? "ON" : "off");
                 string bt = beTicks.ToString("+0;-0;0", CultureInfo.InvariantCulture) + " t";
                 if (lblBeT != null) lblBeT.Text = bt;
