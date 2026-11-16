@@ -268,6 +268,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         // already carrying the day session's count. Key = account name, value = entries this session.
         private readonly Dictionary<string, int> autoTradesAcct = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private readonly object tradeCntLock = new object();
+        private string acctDriftNote = "";
         private DateTime autoSession = DateTime.MinValue;
         // "Require break of signal bar" bookkeeping: a signal that's waiting for a LATER bar to break its own signal bar's high/low
         private bool sigPendActive; private int sigPendDir, sigPendBar; private double sigPendHigh, sigPendLow;
@@ -1254,6 +1255,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (State != State.Realtime) { SetStatus("AUTO TRADE: the chart is not live yet."); return; }
             autoAcct = a; autoEvalBar = -1; revDir = 0; closing = false; autoNote = ""; sigPendActive = false;
             autoOn = true;
+            SetStatus("AUTO TRADE armed on account " + a.Name + " - all auto entries go to this account until you switch AUTO off.");
             string m = "AUTO TRADE ON  -  account " + a.Name + ", qty " + entQty + ", stop " + entSl + "t, target " + (entTp > 0 ? entTp + "t" : "none")
                      + "  |  long: " + SideDesc(srcLong, ruleLong, valLong) + "  |  short: " + SideDesc(srcShort, ruleShort, valShort);
             SetStatus(m);
@@ -2087,7 +2089,20 @@ namespace NinjaTrader.NinjaScript.Indicators
             try
             {
                 if (root == null) return;
-                acct = ResolveAccount();
+                // AutoEvaluate trades autoAcct, which ToggleAuto froze when AUTO was switched on, but this
+                // used to re-resolve acct every tick -- so the panel could show one account (whatever Chart
+                // Trader currently resolves to) while auto entries were going to another. That is exactly how
+                // 10 entries reached Sim120 while the HUD read "FLAT (Sim100)". While AUTO is armed the panel
+                // now follows the armed account, and any divergence is reported instead of hidden.
+                Account resolvedAcct = ResolveAccount();
+                if (autoOn && autoAcct != null)
+                {
+                    acctDriftNote = ReferenceEquals(resolvedAcct, autoAcct) ? ""
+                        : "AUTO is trading " + autoAcct.Name + "  -  Chart Trader now resolves to "
+                          + (resolvedAcct == null ? "nothing" : resolvedAcct.Name) + ". Switch AUTO off and on to move it.";
+                    acct = autoAcct;
+                }
+                else { acctDriftNote = ""; acct = resolvedAcct; }
                 Account a = acct;
                 EnsureGuardSub(a);
                 CleanupOrphans();
@@ -2150,7 +2165,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Account accUi = acct; int cnt = TradesOn(accUi); string accNm = accUi == null ? "no account" : accUi.Name;
                     string lim = (AutoMaxTradesPerDay > 0 ? "trades this session " + cnt + "/" + AutoMaxTradesPerDay : "trades this session " + cnt) + " on " + accNm
                                + (AutoStartHHmm != AutoEndHHmm ? "   window " + AutoStartHHmm.ToString("0000") + "-" + AutoEndHHmm.ToString("0000") : "");
-                    lblAutoInfo.Text = (autoOn ? lim : "off  |  " + lim) + (autoNote.Length > 0 ? "\n" + autoNote : "");
+                    lblAutoInfo.Text = (autoOn ? lim : "off  |  " + lim) + (acctDriftNote.Length > 0 ? "\n" + acctDriftNote : "") + (autoNote.Length > 0 ? "\n" + autoNote : "");
                 }
                 if (btnArm != null)
                 {
