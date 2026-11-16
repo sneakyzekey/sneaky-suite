@@ -686,7 +686,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AlertOnTouch = true;
                 AlertsOn = false;
                 RecentOnly = false;
-                RenderDebug = true;
+                RenderDebug = false;
                 RecentBars = 1500;
                 MaxGhosts = 15;
                 Record = true;
