@@ -529,6 +529,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Display recent zones only", GroupName = "15. Performance", Order = 121)]
         public bool RecentOnly { get; set; }
 
+        [Display(Name = "Render debug", Description = "Yellow diagnostic line at the top-left of the chart, painted before every early return in OnRender.", GroupName = "99. Diagnostics", Order = 0)]
+        public bool RenderDebug { get; set; }
+
         [Range(100, 1000000)]
         [Display(Name = "Recent window (bars)", GroupName = "15. Performance", Order = 122)]
         public int RecentBars { get; set; }
@@ -683,6 +686,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AlertOnTouch = true;
                 AlertsOn = false;
                 RecentOnly = false;
+                RenderDebug = true;
                 RecentBars = 1500;
                 MaxGhosts = 15;
                 Record = true;
@@ -1481,6 +1485,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Dictionary<long, D2D.SolidColorBrush> brushCache = new Dictionary<long, D2D.SolidColorBrush>();
         private Dictionary<int, DW.TextFormat> fmtCache = new Dictionary<int, DW.TextFormat>();
         private D2D.StrokeStyle stDash, stDot;
+        private int rnCount;
         private float rFrom, rX0, rSp, pL, pR, pT, pB;
         private ChartControl rCtl; private ChartScale rScale;
 
@@ -1612,6 +1617,24 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (Bars == null || ChartBars == null || RenderTarget == null || chartControl == null || chartScale == null) return;
             base.OnRender(chartControl, chartScale);
             int from = Math.Max(ChartBars.FromIndex, 0), to = ChartBars.ToIndex;
+            // ── RENDER DIAGNOSTIC ──────────────────────────────────────────────────────────────────
+            // Painted before every early return below, so it survives whatever is blanking the chart.
+            // If this line is VISIBLE while the zones are gone -> OnRender runs and the problem is the
+            // guards/coordinates/lists it reports. If this line is ALSO GONE -> OnRender is not being
+            // called at all and the cause is outside this method. Turn "Render debug" off once solved.
+            if (RenderDebug)
+            {
+                try
+                {
+                    string dbg = "AOBLE r" + (++rnCount) + " from=" + from + " to=" + to
+                               + " cb=" + CurrentBar + " bars=" + Bars.Count
+                               + " ob=" + obs.Count + " br=" + brs.Count + " fvg=" + fvgs.Count
+                               + " liq=" + liqs.Count + " seg=" + segs.Count + " mtf=" + mtfZ.Count;
+                    RenderTarget.DrawText(dbg, Fmt(AobleTextSize.Small, true),
+                        new SharpDX.RectangleF(ChartPanel.X + 6f, ChartPanel.Y + 6f, 900f, 18f), Br(0xFFEA00, 1f));
+                }
+                catch { }
+            }
             if (to <= from) return;
             lock (sync)
             {
