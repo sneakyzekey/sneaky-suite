@@ -116,10 +116,15 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     actual Pine inputs become NinjaScriptProperty entries; visual styling
 //     is hardcoded to match the source's own fixed defaults.
 // ═══════════════════════════════════════════════════════════════════════════
+// Declared at global scope on purpose, NOT inside NinjaTrader.NinjaScript.Indicators.
+// It is the type of five [NinjaScriptProperty] inputs (Hf1Tf..Hf5Tf), so NinjaTrader emits it
+// unqualified into its generated wrapper region -- and that region also emits into the
+// NinjaTrader.NinjaScript.Strategies and .MarketAnalyzerColumns namespaces, where an enum living
+// in .Indicators cannot be resolved (CS0246 x20 at compile, 5 per generated overload).
+public enum IctHtfTimeframe { M15, M30, H1, H4, D1, W1 }
+
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public enum IctHtfTimeframe { M15, M30, H1, H4, D1, W1 }
-
     public class SneakyIctFxProIfvgSystem_v1_0_0 : Indicator
     {
         // ───────────────────────── IFVG signal object ─────────────────────────
