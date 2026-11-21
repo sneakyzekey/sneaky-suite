@@ -10,6 +10,22 @@ using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 #endregion
 
+// 2026-11-20 (2) -- Added DAILY Max Profit / Max Loss limits (both $ amounts, 0 = off).
+// Unlike TakeProfitDollars/MaxLossDollars above, which guard a single open trade, these
+// track this strategy INSTANCE's own realized P&L for the current session (via
+// SystemPerformance.AllTrades, which is scoped per-strategy-instance, not per-account --
+// so other strategies or manual trades sharing the same account never contaminate this
+// total; see DailyProfitLossExampleTSmod.cs, NinjaTrader's own bundled sample, for the
+// reference pattern this follows). Once either daily limit is reached, NO NEW entries
+// are taken for the rest of the session -- an already-open position is left to the ATR
+// trail / per-trade dollar guards as normal, it is not force-flattened by this check.
+// Resets to 0 at the first bar of each new session. Both default to 0 = off.
+//
+// 2026-11-20 -- Added two OPTIONAL dollar-denominated exit guards: Take Profit ($ per
+// trade) and Max Loss ($ per trade), both default to 0 = off. Left at the default, the
+// strategy is unchanged -- the ATR trailing stop remains the only exit, winners still
+// run uncapped. See CheckDollarGuards below for the mechanism and the trade-off note.
+//
 // FORK NOTE (2026-10-26) -- TurtleTrendBreakout_v1_1_0
 // Forked from TurtleTrendBreakout_v1_0_0. That file is unchanged.
 // Prop-firm accounts commonly reject OCO orders. v1_0_0 rests a buy stop and a sell
@@ -98,6 +114,17 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double trailStopPrice;
         private DateTime lastOwnStopChange = DateTime.MinValue;
 
+        // Optional dollar-denominated exit guards (TakeProfitDollars / MaxLossDollars),
+        // both 0 = off by default -- see the Properties block and CheckDollarGuards below.
+        private bool dollarGuardInFlight;
+
+        // DAILY Max Profit / Max Loss (DailyMaxProfitDollars / DailyMaxLossDollars), both
+        // 0 = off -- see the Properties block and the gating check in OnBarUpdate below.
+        // dailyRealizedPnL is THIS strategy instance's own closed-trade P&L for the
+        // current session only (accumulated in OnPositionUpdate, reset every session).
+        private double dailyRealizedPnL;
+        private bool dailyLimitLoggedToday;
+
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
@@ -149,6 +176,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 UseVolatilityBasedSizing = false;
                 RiskPerTradeDollars = 500;
                 MaxContractsCap = 10;
+                TakeProfitDollars = 0;
+                MaxLossDollars = 0;
+                DailyMaxProfitDollars = 0;
+                DailyMaxLossDollars = 0;
 
                 TradeQuantity = 1;
                 MaxTradesPerDay = 5;
@@ -217,11 +248,14 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (Bars.IsFirstBarOfSession)
             {
                 tradesToday = 0;
+                dailyRealizedPnL = 0;
+                dailyLimitLoggedToday = false;
             }
 
             if (Position.MarketPosition != MarketPosition.Flat)
             {
-                ManageTrailingStop();
+                if (!CheckDollarGuards())
+                    ManageTrailingStop();
                 return;
             }
 
@@ -254,8 +288,26 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Brushes.DodgerBlue, Brushes.DodgerBlue, 15);
             }
 
+            // DAILY Max Profit / Max Loss -- once either is hit (and enabled, >0), block
+            // NEW entries for the rest of the session. This does not touch any position
+            // that's already open (there isn't one here -- we're flat at this point in
+            // OnBarUpdate) or force-flatten anything; it only stops new trades from being
+            // taken, per the dollar amount of THIS strategy instance's own realized P&L
+            // for the current session (dailyRealizedPnL, accumulated in OnPositionUpdate).
+            bool dailyLimitHit =
+                (DailyMaxProfitDollars > 0 && dailyRealizedPnL >= DailyMaxProfitDollars) ||
+                (DailyMaxLossDollars > 0 && dailyRealizedPnL <= -DailyMaxLossDollars);
+
+            if (dailyLimitHit && !dailyLimitLoggedToday)
+            {
+                dailyLimitLoggedToday = true;
+                if (DebugPrints)
+                    LogDebug(Time[0] + " | DAILY LIMIT HIT, no new entries for the rest of the session | dailyRealizedPnL: "
+                        + dailyRealizedPnL.ToString("0.00"));
+            }
+
             int quantity = ComputeQuantity();
-            if (!windowOpen || tradesToday >= MaxTradesPerDay || quantity < 1)
+            if (!windowOpen || tradesToday >= MaxTradesPerDay || quantity < 1 || dailyLimitHit)
             {
                 // Drop the arm so the first tick back inside the rules cannot fire on a
                 // level price already crossed while entries were blocked.
@@ -567,6 +619,63 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
 
         /// <summary>
+        /// 2026-11-20 -- OPTIONAL dollar-based exit guards, both off (0) by default.
+        /// TakeProfitDollars and MaxLossDollars check this trade's current OPEN
+        /// (unrealized) profit every tick and market-flatten the instant either one is
+        /// crossed -- ahead of, and independent from, the ATR trailing stop above. Left
+        /// at 0/0 (the default), this never fires and the strategy behaves exactly as
+        /// documented in ManageTrailingStop's own comment: the ATR trail is the only
+        /// exit, winners run uncapped. Turning TakeProfitDollars on reintroduces exactly
+        /// the capped-winner behavior that comment warns against -- that's a deliberate
+        /// trade-off the caller is opting into, not a bug. MaxLossDollars is a dollar
+        /// backstop beyond the ATR initial/trailing stop (e.g. for a gap/slippage past
+        /// it), not a replacement for it -- the ATR stop order keeps resting either way.
+        /// Returns true if a guard fired (or one is already in flight) so OnBarUpdate
+        /// skips re-trailing the stop on a position that's being closed out this tick.
+        /// </summary>
+        private bool CheckDollarGuards()
+        {
+            if (dollarGuardInFlight)
+                return true;
+            if (TakeProfitDollars <= 0 && MaxLossDollars <= 0)
+                return false;
+            if (Position.MarketPosition == MarketPosition.Flat)
+                return false;
+
+            bool isLong = Position.MarketPosition == MarketPosition.Long;
+            double pointValue = Instrument.MasterInstrument.PointValue;
+            double openPnl = (Close[0] - Position.AveragePrice) * (isLong ? 1 : -1) * pointValue * Position.Quantity;
+
+            string reason = null;
+            if (TakeProfitDollars > 0 && openPnl >= TakeProfitDollars)
+                reason = "TAKE PROFIT ($)";
+            else if (MaxLossDollars > 0 && openPnl <= -MaxLossDollars)
+                reason = "MAX LOSS ($)";
+            if (reason == null)
+                return false;
+
+            dollarGuardInFlight = true;
+            CancelWorkingOrder(ref longStopOrder);
+            CancelWorkingOrder(ref shortStopOrder);
+            try
+            {
+                SubmitOrderUnmanaged(0, isLong ? OrderAction.Sell : OrderAction.BuyToCover, OrderType.Market,
+                    Position.Quantity, 0, 0, string.Empty, isLong ? "TrendLongDollarExit" : "TrendShortDollarExit");
+
+                if (DebugPrints)
+                    LogDebug(Time[0] + " | " + reason
+                        + " | OpenPnL: " + openPnl.ToString("0.00")
+                        + " | Px: " + Close[0].ToString("0.00"));
+            }
+            catch (Exception ex)
+            {
+                dollarGuardInFlight = false;
+                LogDebug(Time[0] + " | DOLLAR GUARD EXIT FAILED | Reason: " + reason + " | Error: " + ex.Message);
+            }
+            return true;
+        }
+
+        /// <summary>
         /// Fixed contract count by default (TradeQuantity), matching the rest of this
         /// Lab's strategies. UseVolatilityBasedSizing switches to the classic Turtle "N"
         /// approach instead: size so that a full stop-out costs roughly RiskPerTradeDollars,
@@ -715,6 +824,15 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (marketPosition == MarketPosition.Flat)
             {
+                // DAILY Max Profit / Max Loss bookkeeping -- SystemPerformance.AllTrades
+                // is scoped to THIS strategy instance only (not the account), so this
+                // can't be contaminated by other strategies or manual trades sharing the
+                // same account. Same accumulation pattern as NinjaTrader's own bundled
+                // sample, DailyProfitLossExampleTSmod.cs. Runs every time this instance
+                // goes flat, so it picks up the trade that just closed.
+                if (SystemPerformance.AllTrades.Count > 0)
+                    dailyRealizedPnL += SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1].ProfitCurrency;
+
                 entryBar = -1;
                 highestHighSinceEntry = 0;
                 lowestLowSinceEntry = double.MaxValue;
@@ -729,6 +847,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 targetsArmed = false;
                 longStopOrder = null;
                 shortStopOrder = null;
+                dollarGuardInFlight = false;
             }
         }
 
@@ -777,6 +896,26 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Range(1, int.MaxValue)]
         [Display(Name = "Max Contracts Cap", GroupName = "Risk", Order = 6)]
         public int MaxContractsCap { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0, double.MaxValue)]
+        [Display(Name = "Take Profit ($ per trade, 0 = off)", Description = "Optional dollar profit cap on top of the ATR trailing stop above. 0 (default) disables it -- the ATR trail stays the only exit and a real trend is still allowed to run uncapped, exactly as this strategy was originally designed. Set above 0 to flatten THIS trade the instant its open profit reaches that dollar amount, even if the trail hasn't caught up yet -- a deliberate trade-off (capped winners) you're opting into, not a correction to the design.", GroupName = "Risk", Order = 7)]
+        public double TakeProfitDollars { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0, double.MaxValue)]
+        [Display(Name = "Max Loss ($ per trade, 0 = off)", Description = "Optional dollar loss backstop, mirroring Take Profit above. 0 (default) disables it. Set above 0 for a hard dollar stop-out layered on top of (not instead of) the ATR initial/trailing stop -- a guaranteed worst case in dollars in case price gaps or slips past the ATR stop.", GroupName = "Risk", Order = 8)]
+        public double MaxLossDollars { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0, double.MaxValue)]
+        [Display(Name = "Daily Max Profit ($, 0 = off)", Description = "Optional daily profit target for THIS strategy instance. 0 (default) disables it. Once this instance's own realized P&L for the session reaches this amount, no NEW trades are taken for the rest of the session -- any position already open is left alone (still managed by the ATR trail / per-trade guards above), it is not force-flattened.", GroupName = "Risk", Order = 9)]
+        public double DailyMaxProfitDollars { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0, double.MaxValue)]
+        [Display(Name = "Daily Max Loss ($, 0 = off)", Description = "Optional daily loss limit for THIS strategy instance, mirroring Daily Max Profit above. 0 (default) disables it. Once this instance's own realized loss for the session reaches this amount, no NEW trades are taken for the rest of the session -- any position already open is left alone, it is not force-flattened.", GroupName = "Risk", Order = 10)]
+        public double DailyMaxLossDollars { get; set; }
 
         [NinjaScriptProperty]
         [Range(1, 100)]

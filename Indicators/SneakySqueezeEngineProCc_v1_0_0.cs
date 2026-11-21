@@ -62,12 +62,52 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //     Draw.Text flag labels; Pine's shape.xcross EXIT markers are ported as
 //     Draw.Text "X" markers (NinjaScript has no native X-cross marker).
 // ═══════════════════════════════════════════════════════════════════════════
+// Declared in the global namespace (not inside NinjaTrader.NinjaScript.Indicators)
+// so NinjaTrader's auto-generated Strategies/MarketAnalyzerColumns accessor
+// wrappers can resolve these types unqualified -- same convention already used
+// by SneakyTradeHUD, SneakyInsaneToOsc_v1_0_0, SneakyWix9ineRanges and
+// TONebula elsewhere in this repo, to avoid CS0246 in the generated code region.
+public enum CcTradeStyle { Scalping, DayTrading, SwingTrading }
+public enum CcSignalMode { EarlierSignals, Balanced, StrongerConfirmation }
+public enum CcEngineMode { Classic, Pro, Early }
+
+// Exact dashboard display text for the three enums above, matching the Pine
+// source's own input.string option labels verbatim (tradeStyle/signalMode/
+// engineMode options on lines 10-12) -- the bare enum .ToString() ("DayTrading",
+// "Pro") does not match Pine's dashboard text ("Day Trading", "CandleChasers PRO").
+public static class CcDisplay
+{
+    public static string Of(CcTradeStyle v)
+    {
+        switch (v)
+        {
+            case CcTradeStyle.DayTrading: return "Day Trading";
+            case CcTradeStyle.SwingTrading: return "Swing Trading";
+            default: return "Scalping";
+        }
+    }
+    public static string Of(CcSignalMode v)
+    {
+        switch (v)
+        {
+            case CcSignalMode.Balanced: return "Balanced";
+            case CcSignalMode.StrongerConfirmation: return "Stronger Confirmation";
+            default: return "Earlier Signals";
+        }
+    }
+    public static string Of(CcEngineMode v)
+    {
+        switch (v)
+        {
+            case CcEngineMode.Pro: return "CandleChasers PRO";
+            case CcEngineMode.Early: return "CandleChasers Early";
+            default: return "CandleChasers Classic";
+        }
+    }
+}
+
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public enum CcTradeStyle { Scalping, DayTrading, SwingTrading }
-    public enum CcSignalMode { EarlierSignals, Balanced, StrongerConfirmation }
-    public enum CcEngineMode { Classic, Pro, Early }
-
     public class SneakySqueezeEngineProCc_v1_0_0 : Indicator
     {
         // ───────────────────────── persistent state ─────────────────────────
@@ -86,6 +126,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int direction; private double entryPx = double.NaN, stopPx = double.NaN, targetPx = double.NaN, extremePx = double.NaN;
         private int lastEntryBar = -1, lastExitBar = -1, tradedEpisode = -1;
         private string lastExitReason = "NONE";
+
+        // Custom-rendered dashboard table (drawn in OnRender, in THIS
+        // indicator's own panel) -- cached each bar so OnRender has no
+        // OnBarUpdate-only state to recompute every paint.
+        private readonly string dbTitleLeft = "CANDLECHASERS", dbTitleRight = "SQZ ENGINE PRO";
+        private readonly List<Tuple<string, string, Brush>> dashboardRows = new List<Tuple<string, string, Brush>>();
 
         [NinjaScriptProperty]
         [Display(Name = "Trading style", GroupName = "01. CandleChasers Presets", Order = 0)]
@@ -491,16 +537,55 @@ namespace NinjaTrader.NinjaScript.Indicators
             Values[2][0] = longScore; Values[3][0] = shortScore; Values[4][0] = hasVolume ? rvol : 0.0; Values[5][0] = adx; Values[6][0] = squeezeDuration;
             Values[7][0] = ShowTradeMap ? stopPx : double.NaN; Values[8][0] = ShowTradeMap ? targetPx : double.NaN;
 
-            if (release) Draw.Diamond(this, "CcRel" + CurrentBar, false, 0, 0, Brushes.Aqua);
-            if (ShowEarly && earlyLongSignal) Draw.Text(this, "CcEBu" + CurrentBar, false, "E", 0, 0, 12, bullBright, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-            if (ShowEarly && earlyShortSignal) Draw.Text(this, "CcEBe" + CurrentBar, false, "E", 0, 0, -12, bearBright, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-            if (ShowSignals && buy) Draw.Text(this, "CcBuy" + CurrentBar, false, "CC BUY", 0, 0, 20, Brushes.Black, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, bullBright, bullBright, 0);
-            if (ShowSignals && sell) Draw.Text(this, "CcSell" + CurrentBar, false, "CC SELL", 0, 0, -20, Brushes.White, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, bearBright, bearBright, 0);
-            if (ShowDivergences && bullDiv) Draw.TriangleUp(this, "CcDivBu" + CurrentBar, false, 0, -5, Brushes.Lime);
-            if (ShowDivergences && bearDiv) Draw.TriangleDown(this, "CcDivBe" + CurrentBar, false, 0, 15, Brushes.Red);
-            if (ShowExits && exitLong) Draw.Text(this, "CcXLong" + CurrentBar, false, "X", 0, 0, -8, Brushes.Yellow, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-            if (ShowExits && exitShort) Draw.Text(this, "CcXShort" + CurrentBar, false, "X", 0, 0, 8, Brushes.Yellow, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            // These markers render on the PRICE panel (Draw.* with an
+            // isAutoScale owner draws into the panel's own price axis), so
+            // their Y must be a real price, not a momentum/oscillator value.
+            // The previous version anchored them to the histogram's own
+            // rolling high/low (roughly -80..+80), which is a different
+            // scale than NQ's ~26000 price -- NinjaTrader's autoscale then
+            // had to stretch the price axis to fit both, squashing the
+            // candles into a sliver and the markers down near zero.
+            // Anchor to the bar's own High/Low plus an ATR-scaled offset
+            // instead, so everything sits just off the actual bars:
+            // release=diamond+"R" (below bar), early=circle+"E"
+            // (below=bull, above=bear), buy/sell=labelup/labeldown
+            // "CC BUY"/"CC SELL" (below/above), divergence=triangleup/down+
+            // "DIV" (below/above), exit=xcross+"EXIT" (below/above).
+            double markerOffset = Math.Max(atr * 0.6, TickSize * 4);
+            double bottomY = Low[0] - markerOffset;
+            double topY = High[0] + markerOffset;
 
+            if (release)
+            {
+                Draw.Diamond(this, "CcRel" + CurrentBar, true, 0, bottomY, Brushes.Aqua);
+                Draw.Text(this, "CcRelTxt" + CurrentBar, true, "R", 0, bottomY, -14, Brushes.Aqua, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            if (ShowEarly && earlyLongSignal)
+            {
+                Draw.Dot(this, "CcEBuDot" + CurrentBar, true, 0, bottomY, bullBright);
+                Draw.Text(this, "CcEBu" + CurrentBar, true, "E", 0, bottomY, 14, bullBright, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            if (ShowEarly && earlyShortSignal)
+            {
+                Draw.Dot(this, "CcEBeDot" + CurrentBar, true, 0, topY, bearBright);
+                Draw.Text(this, "CcEBe" + CurrentBar, true, "E", 0, topY, 14, bearBright, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            if (ShowSignals && buy) Draw.Text(this, "CcBuy" + CurrentBar, true, "CC BUY", 0, bottomY, -28, Brushes.Black, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, bullBright, bullBright, 0);
+            if (ShowSignals && sell) Draw.Text(this, "CcSell" + CurrentBar, true, "CC SELL", 0, topY, 28, Brushes.White, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, bearBright, bearBright, 0);
+            if (ShowDivergences && bullDiv)
+            {
+                Draw.TriangleUp(this, "CcDivBu" + CurrentBar, true, 0, bottomY, Brushes.Lime);
+                Draw.Text(this, "CcDivBuTxt" + CurrentBar, true, "DIV", 0, bottomY, -14, Brushes.Lime, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            if (ShowDivergences && bearDiv)
+            {
+                Draw.TriangleDown(this, "CcDivBe" + CurrentBar, true, 0, topY, Brushes.Red);
+                Draw.Text(this, "CcDivBeTxt" + CurrentBar, true, "DIV", 0, topY, 14, Brushes.Red, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            if (ShowExits && exitLong) Draw.Text(this, "CcXLong" + CurrentBar, true, "EXIT", 0, bottomY, -42, Brushes.Yellow, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            if (ShowExits && exitShort) Draw.Text(this, "CcXShort" + CurrentBar, true, "EXIT", 0, topY, 42, Brushes.Yellow, new SimpleFont("Arial", 8), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+            dashboardRows.Clear();
             if (ShowDashboard)
             {
                 string sqzText = classicMode ? (inSqueeze ? "CLASSIC SQUEEZE" : "OPEN") : (deep ? "DEEP" : med ? "MEDIUM" : loose ? "LOOSE" : freshRelease ? "RELEASED" : "OPEN");
@@ -508,21 +593,25 @@ namespace NinjaTrader.NinjaScript.Indicators
                 string momText = bullMomentum ? "ACCEL UP" : bearMomentum ? "ACCEL DOWN" : rising ? "UP / SLOW" : "DOWN / SLOW";
                 string tradeMap = !ShowTradeMap ? "OFF" : direction == 0 ? "FLAT" : (direction == 1 ? "LONG " : "SHORT ") + "S:" + stopPx.ToString("0.00") + " T:" + targetPx.ToString("0.00");
                 string htfLbl = htfActive ? (htfMinutes + "m") : "local";
-                string panel =
-                    "CANDLECHASERS — SQZ ENGINE PRO\n" +
-                    "STYLE/MODE: " + TradeStyle + " / " + SignalMode + "\n" +
-                    "SQUEEZE: " + sqzText + " | " + (inSqueeze ? squeezeDuration : lastSqueezeDuration) + " bars\n" +
-                    "TREND (" + htfLbl + "): " + trendText + "\n" +
-                    "MOMENTUM: " + momText + "\n" +
-                    "ADX/RVOL: " + adx.ToString("0.0") + " / " + (hasVolume ? rvol.ToString("0.00") : "N/A") + "\n" +
-                    "LONG/SHORT: " + (classicMode ? "NOT USED IN CLASSIC" : longScore + " / " + shortScore) + "\n" +
-                    "STATUS: " + lifecycle + "\n" +
-                    "TRADE MAP: " + tradeMap + "\n" +
-                    "ENGINE: " + EngineMode + "\n" +
-                    "LAST EXIT: " + lastExitReason;
-                Draw.TextFixed(this, "CcDash", panel, TextPosition.TopRight, Brushes.White, new SimpleFont("Arial", 10), Brushes.Transparent, Brushes.DimGray, 20);
+
+                Brush trendColor = bullTrend ? bullBright : bearTrend ? bearBright : Brushes.Silver;
+                Brush momColor = (bullMomentum || rising) ? bullBright : bearBright;
+                Brush statusColor = direction == 1 ? bullBright : direction == -1 ? bearBright
+                    : cooling ? Brushes.Gray : inSqueeze ? Brushes.Orange
+                    : (freshRelease && episodeAvailable) ? Brushes.Aqua : Brushes.Silver;
+                Brush tradeMapColor = direction == 1 ? bullBright : direction == -1 ? bearBright : Brushes.Silver;
+
+                dashboardRows.Add(Tuple.Create("STYLE/MODE", CcDisplay.Of(TradeStyle) + " / " + CcDisplay.Of(SignalMode), (Brush)Brushes.White));
+                dashboardRows.Add(Tuple.Create("SQUEEZE", sqzText + " | " + (inSqueeze ? squeezeDuration : lastSqueezeDuration) + " bars", dotColor));
+                dashboardRows.Add(Tuple.Create("TREND (" + htfLbl + ")", trendText, trendColor));
+                dashboardRows.Add(Tuple.Create("MOMENTUM", momText, momColor));
+                dashboardRows.Add(Tuple.Create("ADX/RVOL", adx.ToString("0.0") + " / " + (hasVolume ? rvol.ToString("0.00") : "N/A"), (Brush)Brushes.Silver));
+                dashboardRows.Add(Tuple.Create("LONG/SHORT", classicMode ? "NOT USED" : longScore + " / " + shortScore, (Brush)Brushes.Silver));
+                dashboardRows.Add(Tuple.Create("STATUS", lifecycle, statusColor));
+                dashboardRows.Add(Tuple.Create("TRADE MAP", tradeMap, tradeMapColor));
+                dashboardRows.Add(Tuple.Create("ENGINE", CcDisplay.Of(EngineMode), (Brush)Brushes.DeepSkyBlue));
+                dashboardRows.Add(Tuple.Create("LAST EXIT", lastExitReason, (Brush)Brushes.Yellow));
             }
-            else RemoveDrawObject("CcDash");
 
             if (buy) Alert("CcBuy", Priority.Medium, "CandleChasers Squeeze Engine PRO BUY on " + Instrument.FullName + " " + BarsPeriod + " at " + Close[0], NinjaTrader.Core.Globals.InstallDir + "\\sounds\\Alert1.wav", 15, Brushes.Black, bullBright);
             if (sell) Alert("CcSell", Priority.Medium, "CandleChasers Squeeze Engine PRO SELL on " + Instrument.FullName + " " + BarsPeriod + " at " + Close[0], NinjaTrader.Core.Globals.InstallDir + "\\sounds\\Alert1.wav", 15, Brushes.Black, bearBright);
@@ -534,6 +623,71 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (exitLong || exitShort) Alert("CcExit", Priority.Low, "CandleChasers virtual trade exit on " + Instrument.FullName + " " + BarsPeriod, NinjaTrader.Core.Globals.InstallDir + "\\sounds\\Alert1.wav", 15, Brushes.Black, Brushes.Yellow);
 
             prevInSqueeze = inSqueeze;
+        }
+
+        // Custom-rendered dashboard table. Draw.TextFixed can only paint one
+        // solid-color text blob, and (like every other Draw.* call from this
+        // non-overlay indicator) it lands on the PRICE panel, not this
+        // indicator's own panel -- neither matches the original Pine
+        // dashboard, which is a bordered table of individually-colored rows
+        // sitting inside the indicator's own pane. OnRender draws directly
+        // into whichever panel hosts this indicator, so it naturally lands
+        // here instead, with per-row colors Draw.TextFixed can't provide.
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+            if (!ShowDashboard || dashboardRows.Count == 0 || RenderTarget == null)
+                return;
+
+            const float padding = 8f, rowHeight = 15f, titleHeight = 18f;
+            const float labelColWidth = 100f, valueColWidth = 110f;
+            float boxWidth = labelColWidth + valueColWidth + padding * 2f;
+            float boxHeight = titleHeight + dashboardRows.Count * rowHeight + padding * 2f;
+            float left = ChartPanel.X + ChartPanel.W - boxWidth - 6f;
+            float top = ChartPanel.Y + 6f;
+            var boxRect = new SharpDX.RectangleF(left, top, boxWidth, boxHeight);
+
+            SharpDX.Direct2D1.Brush dxBg = new SolidColorBrush(Colors.Black) { Opacity = 0.6 }.ToDxBrush(RenderTarget);
+            SharpDX.Direct2D1.Brush dxBorder = Brushes.DimGray.ToDxBrush(RenderTarget);
+            RenderTarget.FillRectangle(boxRect, dxBg);
+            RenderTarget.DrawRectangle(boxRect, dxBorder, 1f);
+            dxBg.Dispose();
+            dxBorder.Dispose();
+
+            var titleFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", 11f);
+            var labelFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", 10f);
+            var valueFormat = new SharpDX.DirectWrite.TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Arial", 10f);
+            valueFormat.TextAlignment = SharpDX.DirectWrite.TextAlignment.Trailing;
+
+            SharpDX.Direct2D1.Brush dxTitleLeft = Brushes.Silver.ToDxBrush(RenderTarget);
+            SharpDX.Direct2D1.Brush dxTitleRight = Brushes.DeepSkyBlue.ToDxBrush(RenderTarget);
+            float titleLeftWidth = boxWidth * 0.52f;
+            RenderTarget.DrawText(dbTitleLeft, titleFormat, new SharpDX.RectangleF(left + padding, top + padding - 3f, titleLeftWidth, titleHeight), dxTitleLeft);
+            RenderTarget.DrawText(dbTitleRight, titleFormat, new SharpDX.RectangleF(left + padding + titleLeftWidth, top + padding - 3f, boxWidth - padding * 2f - titleLeftWidth, titleHeight), dxTitleRight);
+            dxTitleLeft.Dispose();
+            dxTitleRight.Dispose();
+
+            SharpDX.Direct2D1.Brush dxLabel = Brushes.LightGray.ToDxBrush(RenderTarget);
+            float rowY = top + padding + titleHeight;
+            for (int i = 0; i < dashboardRows.Count; i++)
+            {
+                if (i % 2 == 1)
+                {
+                    SharpDX.Direct2D1.Brush dxStripe = new SolidColorBrush(Colors.White) { Opacity = 0.04 }.ToDxBrush(RenderTarget);
+                    RenderTarget.FillRectangle(new SharpDX.RectangleF(left + 1f, rowY, boxWidth - 2f, rowHeight), dxStripe);
+                    dxStripe.Dispose();
+                }
+                Tuple<string, string, Brush> row = dashboardRows[i];
+                RenderTarget.DrawText(row.Item1, labelFormat, new SharpDX.RectangleF(left + padding, rowY, labelColWidth, rowHeight), dxLabel);
+                SharpDX.Direct2D1.Brush dxValue = row.Item3.ToDxBrush(RenderTarget);
+                RenderTarget.DrawText(row.Item2, valueFormat, new SharpDX.RectangleF(left + padding + labelColWidth, rowY, valueColWidth, rowHeight), dxValue);
+                dxValue.Dispose();
+                rowY += rowHeight;
+            }
+            dxLabel.Dispose();
+            titleFormat.Dispose();
+            labelFormat.Dispose();
+            valueFormat.Dispose();
         }
 
         // ───────────────────────── helpers ─────────────────────────
@@ -599,3 +753,60 @@ namespace NinjaTrader.NinjaScript.Indicators
         #endregion
     }
 }
+
+#region NinjaScript generated code. Neither change nor remove.
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+	{
+		private SneakySqueezeEngineProCc_v1_0_0[] cacheSneakySqueezeEngineProCc_v1_0_0;
+		public SneakySqueezeEngineProCc_v1_0_0 SneakySqueezeEngineProCc_v1_0_0(CcTradeStyle tradeStyle, CcSignalMode signalMode, CcEngineMode engineMode, bool classicSlope, int cooldownBars, bool customLengths, int userBBLen, int userKCLen, double userBBMult, bool useHTF, bool autoHTF, int manualHTFMinutes, bool useADX, bool useVol, bool requireZero, bool allowNoSqueeze, bool useTR, double wideKC, double normalKC, double tightKC, bool normalizeMomentum, int accelSmoothing, bool showDivergences, int pivotLeft, int pivotRight, int maxPivotDistance, bool showTradeMap, int atrPeriod, double atrStopMult, double rewardMult, bool trailEnabled, double trailATR, bool exitOnFade, bool showExits, bool showPriceMap, bool showDashboard, bool showEarly, bool showSignals, bool showBackground)
+		{
+			return SneakySqueezeEngineProCc_v1_0_0(Input, tradeStyle, signalMode, engineMode, classicSlope, cooldownBars, customLengths, userBBLen, userKCLen, userBBMult, useHTF, autoHTF, manualHTFMinutes, useADX, useVol, requireZero, allowNoSqueeze, useTR, wideKC, normalKC, tightKC, normalizeMomentum, accelSmoothing, showDivergences, pivotLeft, pivotRight, maxPivotDistance, showTradeMap, atrPeriod, atrStopMult, rewardMult, trailEnabled, trailATR, exitOnFade, showExits, showPriceMap, showDashboard, showEarly, showSignals, showBackground);
+		}
+
+		public SneakySqueezeEngineProCc_v1_0_0 SneakySqueezeEngineProCc_v1_0_0(ISeries<double> input, CcTradeStyle tradeStyle, CcSignalMode signalMode, CcEngineMode engineMode, bool classicSlope, int cooldownBars, bool customLengths, int userBBLen, int userKCLen, double userBBMult, bool useHTF, bool autoHTF, int manualHTFMinutes, bool useADX, bool useVol, bool requireZero, bool allowNoSqueeze, bool useTR, double wideKC, double normalKC, double tightKC, bool normalizeMomentum, int accelSmoothing, bool showDivergences, int pivotLeft, int pivotRight, int maxPivotDistance, bool showTradeMap, int atrPeriod, double atrStopMult, double rewardMult, bool trailEnabled, double trailATR, bool exitOnFade, bool showExits, bool showPriceMap, bool showDashboard, bool showEarly, bool showSignals, bool showBackground)
+		{
+			if (cacheSneakySqueezeEngineProCc_v1_0_0 != null)
+				for (int idx = 0; idx < cacheSneakySqueezeEngineProCc_v1_0_0.Length; idx++)
+					if (cacheSneakySqueezeEngineProCc_v1_0_0[idx] != null && cacheSneakySqueezeEngineProCc_v1_0_0[idx].TradeStyle == tradeStyle && cacheSneakySqueezeEngineProCc_v1_0_0[idx].SignalMode == signalMode && cacheSneakySqueezeEngineProCc_v1_0_0[idx].EngineMode == engineMode && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ClassicSlope == classicSlope && cacheSneakySqueezeEngineProCc_v1_0_0[idx].CooldownBars == cooldownBars && cacheSneakySqueezeEngineProCc_v1_0_0[idx].CustomLengths == customLengths && cacheSneakySqueezeEngineProCc_v1_0_0[idx].UserBBLen == userBBLen && cacheSneakySqueezeEngineProCc_v1_0_0[idx].UserKCLen == userKCLen && cacheSneakySqueezeEngineProCc_v1_0_0[idx].UserBBMult == userBBMult && cacheSneakySqueezeEngineProCc_v1_0_0[idx].UseHTF == useHTF && cacheSneakySqueezeEngineProCc_v1_0_0[idx].AutoHTF == autoHTF && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ManualHTFMinutes == manualHTFMinutes && cacheSneakySqueezeEngineProCc_v1_0_0[idx].UseADX == useADX && cacheSneakySqueezeEngineProCc_v1_0_0[idx].UseVol == useVol && cacheSneakySqueezeEngineProCc_v1_0_0[idx].RequireZero == requireZero && cacheSneakySqueezeEngineProCc_v1_0_0[idx].AllowNoSqueeze == allowNoSqueeze && cacheSneakySqueezeEngineProCc_v1_0_0[idx].UseTR == useTR && cacheSneakySqueezeEngineProCc_v1_0_0[idx].WideKC == wideKC && cacheSneakySqueezeEngineProCc_v1_0_0[idx].NormalKC == normalKC && cacheSneakySqueezeEngineProCc_v1_0_0[idx].TightKC == tightKC && cacheSneakySqueezeEngineProCc_v1_0_0[idx].NormalizeMomentum == normalizeMomentum && cacheSneakySqueezeEngineProCc_v1_0_0[idx].AccelSmoothing == accelSmoothing && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowDivergences == showDivergences && cacheSneakySqueezeEngineProCc_v1_0_0[idx].PivotLeft == pivotLeft && cacheSneakySqueezeEngineProCc_v1_0_0[idx].PivotRight == pivotRight && cacheSneakySqueezeEngineProCc_v1_0_0[idx].MaxPivotDistance == maxPivotDistance && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowTradeMap == showTradeMap && cacheSneakySqueezeEngineProCc_v1_0_0[idx].AtrPeriod == atrPeriod && cacheSneakySqueezeEngineProCc_v1_0_0[idx].AtrStopMult == atrStopMult && cacheSneakySqueezeEngineProCc_v1_0_0[idx].RewardMult == rewardMult && cacheSneakySqueezeEngineProCc_v1_0_0[idx].TrailEnabled == trailEnabled && cacheSneakySqueezeEngineProCc_v1_0_0[idx].TrailATR == trailATR && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ExitOnFade == exitOnFade && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowExits == showExits && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowPriceMap == showPriceMap && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowDashboard == showDashboard && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowEarly == showEarly && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowSignals == showSignals && cacheSneakySqueezeEngineProCc_v1_0_0[idx].ShowBackground == showBackground && cacheSneakySqueezeEngineProCc_v1_0_0[idx].EqualsInput(input))
+						return cacheSneakySqueezeEngineProCc_v1_0_0[idx];
+			return CacheIndicator<SneakySqueezeEngineProCc_v1_0_0>(new SneakySqueezeEngineProCc_v1_0_0(){ TradeStyle = tradeStyle, SignalMode = signalMode, EngineMode = engineMode, ClassicSlope = classicSlope, CooldownBars = cooldownBars, CustomLengths = customLengths, UserBBLen = userBBLen, UserKCLen = userKCLen, UserBBMult = userBBMult, UseHTF = useHTF, AutoHTF = autoHTF, ManualHTFMinutes = manualHTFMinutes, UseADX = useADX, UseVol = useVol, RequireZero = requireZero, AllowNoSqueeze = allowNoSqueeze, UseTR = useTR, WideKC = wideKC, NormalKC = normalKC, TightKC = tightKC, NormalizeMomentum = normalizeMomentum, AccelSmoothing = accelSmoothing, ShowDivergences = showDivergences, PivotLeft = pivotLeft, PivotRight = pivotRight, MaxPivotDistance = maxPivotDistance, ShowTradeMap = showTradeMap, AtrPeriod = atrPeriod, AtrStopMult = atrStopMult, RewardMult = rewardMult, TrailEnabled = trailEnabled, TrailATR = trailATR, ExitOnFade = exitOnFade, ShowExits = showExits, ShowPriceMap = showPriceMap, ShowDashboard = showDashboard, ShowEarly = showEarly, ShowSignals = showSignals, ShowBackground = showBackground }, input, ref cacheSneakySqueezeEngineProCc_v1_0_0);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
+{
+	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+	{
+		public Indicators.SneakySqueezeEngineProCc_v1_0_0 SneakySqueezeEngineProCc_v1_0_0(CcTradeStyle tradeStyle, CcSignalMode signalMode, CcEngineMode engineMode, bool classicSlope, int cooldownBars, bool customLengths, int userBBLen, int userKCLen, double userBBMult, bool useHTF, bool autoHTF, int manualHTFMinutes, bool useADX, bool useVol, bool requireZero, bool allowNoSqueeze, bool useTR, double wideKC, double normalKC, double tightKC, bool normalizeMomentum, int accelSmoothing, bool showDivergences, int pivotLeft, int pivotRight, int maxPivotDistance, bool showTradeMap, int atrPeriod, double atrStopMult, double rewardMult, bool trailEnabled, double trailATR, bool exitOnFade, bool showExits, bool showPriceMap, bool showDashboard, bool showEarly, bool showSignals, bool showBackground)
+		{
+			return indicator.SneakySqueezeEngineProCc_v1_0_0(Input, tradeStyle, signalMode, engineMode, classicSlope, cooldownBars, customLengths, userBBLen, userKCLen, userBBMult, useHTF, autoHTF, manualHTFMinutes, useADX, useVol, requireZero, allowNoSqueeze, useTR, wideKC, normalKC, tightKC, normalizeMomentum, accelSmoothing, showDivergences, pivotLeft, pivotRight, maxPivotDistance, showTradeMap, atrPeriod, atrStopMult, rewardMult, trailEnabled, trailATR, exitOnFade, showExits, showPriceMap, showDashboard, showEarly, showSignals, showBackground);
+		}
+
+		public Indicators.SneakySqueezeEngineProCc_v1_0_0 SneakySqueezeEngineProCc_v1_0_0(ISeries<double> input , CcTradeStyle tradeStyle, CcSignalMode signalMode, CcEngineMode engineMode, bool classicSlope, int cooldownBars, bool customLengths, int userBBLen, int userKCLen, double userBBMult, bool useHTF, bool autoHTF, int manualHTFMinutes, bool useADX, bool useVol, bool requireZero, bool allowNoSqueeze, bool useTR, double wideKC, double normalKC, double tightKC, bool normalizeMomentum, int accelSmoothing, bool showDivergences, int pivotLeft, int pivotRight, int maxPivotDistance, bool showTradeMap, int atrPeriod, double atrStopMult, double rewardMult, bool trailEnabled, double trailATR, bool exitOnFade, bool showExits, bool showPriceMap, bool showDashboard, bool showEarly, bool showSignals, bool showBackground)
+		{
+			return indicator.SneakySqueezeEngineProCc_v1_0_0(input, tradeStyle, signalMode, engineMode, classicSlope, cooldownBars, customLengths, userBBLen, userKCLen, userBBMult, useHTF, autoHTF, manualHTFMinutes, useADX, useVol, requireZero, allowNoSqueeze, useTR, wideKC, normalKC, tightKC, normalizeMomentum, accelSmoothing, showDivergences, pivotLeft, pivotRight, maxPivotDistance, showTradeMap, atrPeriod, atrStopMult, rewardMult, trailEnabled, trailATR, exitOnFade, showExits, showPriceMap, showDashboard, showEarly, showSignals, showBackground);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+	{
+		public Indicators.SneakySqueezeEngineProCc_v1_0_0 SneakySqueezeEngineProCc_v1_0_0(CcTradeStyle tradeStyle, CcSignalMode signalMode, CcEngineMode engineMode, bool classicSlope, int cooldownBars, bool customLengths, int userBBLen, int userKCLen, double userBBMult, bool useHTF, bool autoHTF, int manualHTFMinutes, bool useADX, bool useVol, bool requireZero, bool allowNoSqueeze, bool useTR, double wideKC, double normalKC, double tightKC, bool normalizeMomentum, int accelSmoothing, bool showDivergences, int pivotLeft, int pivotRight, int maxPivotDistance, bool showTradeMap, int atrPeriod, double atrStopMult, double rewardMult, bool trailEnabled, double trailATR, bool exitOnFade, bool showExits, bool showPriceMap, bool showDashboard, bool showEarly, bool showSignals, bool showBackground)
+		{
+			return indicator.SneakySqueezeEngineProCc_v1_0_0(Input, tradeStyle, signalMode, engineMode, classicSlope, cooldownBars, customLengths, userBBLen, userKCLen, userBBMult, useHTF, autoHTF, manualHTFMinutes, useADX, useVol, requireZero, allowNoSqueeze, useTR, wideKC, normalKC, tightKC, normalizeMomentum, accelSmoothing, showDivergences, pivotLeft, pivotRight, maxPivotDistance, showTradeMap, atrPeriod, atrStopMult, rewardMult, trailEnabled, trailATR, exitOnFade, showExits, showPriceMap, showDashboard, showEarly, showSignals, showBackground);
+		}
+
+		public Indicators.SneakySqueezeEngineProCc_v1_0_0 SneakySqueezeEngineProCc_v1_0_0(ISeries<double> input , CcTradeStyle tradeStyle, CcSignalMode signalMode, CcEngineMode engineMode, bool classicSlope, int cooldownBars, bool customLengths, int userBBLen, int userKCLen, double userBBMult, bool useHTF, bool autoHTF, int manualHTFMinutes, bool useADX, bool useVol, bool requireZero, bool allowNoSqueeze, bool useTR, double wideKC, double normalKC, double tightKC, bool normalizeMomentum, int accelSmoothing, bool showDivergences, int pivotLeft, int pivotRight, int maxPivotDistance, bool showTradeMap, int atrPeriod, double atrStopMult, double rewardMult, bool trailEnabled, double trailATR, bool exitOnFade, bool showExits, bool showPriceMap, bool showDashboard, bool showEarly, bool showSignals, bool showBackground)
+		{
+			return indicator.SneakySqueezeEngineProCc_v1_0_0(input, tradeStyle, signalMode, engineMode, classicSlope, cooldownBars, customLengths, userBBLen, userKCLen, userBBMult, useHTF, autoHTF, manualHTFMinutes, useADX, useVol, requireZero, allowNoSqueeze, useTR, wideKC, normalKC, tightKC, normalizeMomentum, accelSmoothing, showDivergences, pivotLeft, pivotRight, maxPivotDistance, showTradeMap, atrPeriod, atrStopMult, rewardMult, trailEnabled, trailATR, exitOnFade, showExits, showPriceMap, showDashboard, showEarly, showSignals, showBackground);
+		}
+	}
+}
+
+#endregion

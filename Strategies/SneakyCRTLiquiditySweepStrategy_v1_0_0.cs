@@ -86,6 +86,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         // ── range-bucket state (mirrors curBucket/curO/curH/curL/curC) ──
         private long   _bucketMs;
         private long   _curBucket = long.MinValue;
+        private long   _lastBucketId = long.MinValue;
         private bool   _haveBucket;
         private double _curO, _curH, _curL, _curC;
         private int    _rangeStartBar = -1;   // absolute CurrentBar the active range's box starts at
@@ -322,7 +323,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                 }
 
-                if (ShowStatusPanel) DrawStatusPanel(atrNow, atrStopBuffer);
+                if (ShowStatusPanel) DrawStatusPanel(atrNow, atrStopBuffer, longTrendOk, shortTrendOk);
             }
             catch (Exception ex) { Print("CRTLiquiditySweepStrategy OnBarUpdate error: " + ex.Message); }
         }
@@ -362,7 +363,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         // ── range bucket accumulation — mirrors the Pine bucketId/curO..curC block ──
         private void UpdateRangeBucket()
         {
-            long bucketId = (long)Math.Floor(Time[0].ToUniversalTime().Subtract(DateTime.UnixEpoch).TotalMilliseconds / _bucketMs);
+            long bucketId = (long)Math.Floor(Time[0].ToUniversalTime().Subtract(new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds / _bucketMs);
+            _lastBucketId = bucketId;
             bool newBucket = !_haveBucket || bucketId != _curBucket;
 
             if (newBucket)
@@ -432,32 +434,64 @@ namespace NinjaTrader.NinjaScript.Strategies
                 new SimpleFont("Arial", 9), TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
         }
 
-        // ── status panel — same 15 fields as the Pine status table, one text block ──
-        private void DrawStatusPanel(double atrValue, double atrStopBuffer)
+        // ── status panel — same 15 fields as the Pine status table, one text block.
+        //    (Multiple Draw.TextFixed calls anchored to the same corner do NOT
+        //    stack into separate rows in NinjaTrader -- they all render at the same
+        //    point and overlap. Confirmed the hard way; stick to one call here.) ──
+        private void DrawStatusPanel(double atrValue, double atrStopBuffer, bool longTrendOk, bool shortTrendOk)
         {
             int closedTrades = SystemPerformance.AllTrades.Count;
+            int winningTrades = 0;
+            for (int i = 0; i < closedTrades; i++)
+                if (SystemPerformance.AllTrades[i].ProfitCurrency > 0) winningTrades++;
             double winRate = closedTrades > 0
-                ? 100.0 * SystemPerformance.AllTrades.TradesPerformance.Currency.WinningTrades.Count / (double)closedTrades
+                ? 100.0 * winningTrades / (double)closedTrades
                 : double.NaN;
 
-            string trendDirText = TrendMethod == CrtTrendMethod.Off ? "Both (filter off)"
-                : (_state == "WATCHING" ? "n/a this bar" : "n/a this bar");
+            string trendDirText = TrendMethod == CrtTrendMethod.Off
+                ? "Both (filter off)"
+                : (longTrendOk && shortTrendOk ? "Both"
+                    : (longTrendOk ? "Long" : (shortTrendOk ? "Short" : "None")));
+
+            long unixMs = (long)Math.Floor(Time[0].ToUniversalTime()
+                .Subtract(new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds);
+
+            // One accent color for the whole panel, picked from what the strategy is
+            // actually leaning toward right now -- green/red/gold rather than a flat
+            // white block. A single Draw.TextFixed call can only use one brush, so
+            // this is the panel's "mood", not per-row coloring.
+            Brush accent;
+            if (_state == "WATCHING")
+                accent = TrendMethod == CrtTrendMethod.Off ? Brushes.Gold
+                    : (longTrendOk && !shortTrendOk ? Brushes.LimeGreen
+                        : (shortTrendOk && !longTrendOk ? Brushes.OrangeRed : Brushes.Gold));
+            else
+                accent = double.IsNaN(winRate) ? Brushes.DeepSkyBlue
+                    : (winRate >= 50.0 ? Brushes.LimeGreen : Brushes.OrangeRed);
+
+            Brush panelBg = new SolidColorBrush(Color.FromRgb(8, 14, 28));
 
             string text =
-                "CRT Liquidity Sweep\n" +
+                "─ CRT LIQUIDITY SWEEP ─\n" +
                 "Ranges formed: " + _rangesFormedCount + "\n" +
                 "Trades: " + closedTrades + "\n" +
                 "Range H/L: " + (double.IsNaN(_rangeHigh) ? "none yet" : _rangeHigh.ToString("0.##") + " / " + _rangeLow.ToString("0.##")) + "\n" +
                 "State: " + _state + "\n" +
+                "Total bars: " + (CurrentBar + 1) + "\n" +
                 "bar_index: " + CurrentBar + "\n" +
+                "time / bucketMs: " + unixMs + " / " + _bucketMs + "\n" +
+                "bucketId / curBucket: " + _lastBucketId + " / " + _curBucket + "\n" +
+                "curO/H/L/C: " + _curO.ToString("0.##") + " " + _curH.ToString("0.##") + " "
+                    + _curL.ToString("0.##") + " " + _curC.ToString("0.##") + "\n" +
                 "ATR (chart TF): " + atrValue.ToString("0.####") + "\n" +
                 "ATR stop buffer: " + (UseAtrBuffer ? atrStopBuffer.ToString("0.####") : "Off") + "\n" +
                 "Win rate (closed): " + (double.IsNaN(winRate) ? "No closed trades" : winRate.ToString("0.##") + "%") + "\n" +
                 "Entry TF / Range TF: " + BarsPeriod.Value + "m / " + RangeTimeframeMinutes + "m\n" +
-                "Trend filter: " + TrendMethod;
+                "Trend filter: " + TrendMethod + "\n" +
+                "Trend entry direction: " + trendDirText;
 
-            Draw.TextFixed(this, "CRTStatusPanel", text, TextPosition.TopRight, Brushes.White,
-                new SimpleFont("Consolas", 10), Brushes.Transparent, Brushes.Black, 70);
+            Draw.TextFixed(this, "CRTStatusPanel", text, TextPosition.TopRight, accent,
+                new SimpleFont("Consolas", 10), Brushes.Transparent, panelBg, 85);
         }
 
         #region Properties

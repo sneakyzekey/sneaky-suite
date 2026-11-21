@@ -686,7 +686,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AlertOnTouch = true;
                 AlertsOn = false;
                 RecentOnly = false;
-                RenderDebug = false;
+                RenderDebug = true;
                 RecentBars = 1500;
                 MaxGhosts = 15;
                 Record = true;
@@ -1847,3 +1847,60 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
     }
 }
+
+#region NinjaScript generated code. Neither change nor remove.
+
+namespace NinjaTrader.NinjaScript.Indicators
+{
+	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+	{
+		private SneakyAOBLE[] cacheSneakyAOBLE;
+		public SneakyAOBLE SneakyAOBLE()
+		{
+			return SneakyAOBLE(Input);
+		}
+
+		public SneakyAOBLE SneakyAOBLE(ISeries<double> input)
+		{
+			if (cacheSneakyAOBLE != null)
+				for (int idx = 0; idx < cacheSneakyAOBLE.Length; idx++)
+					if (cacheSneakyAOBLE[idx] != null &&  cacheSneakyAOBLE[idx].EqualsInput(input))
+						return cacheSneakyAOBLE[idx];
+			return CacheIndicator<SneakyAOBLE>(new SneakyAOBLE(), input, ref cacheSneakyAOBLE);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
+{
+	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+	{
+		public Indicators.SneakyAOBLE SneakyAOBLE()
+		{
+			return indicator.SneakyAOBLE(Input);
+		}
+
+		public Indicators.SneakyAOBLE SneakyAOBLE(ISeries<double> input )
+		{
+			return indicator.SneakyAOBLE(input);
+		}
+	}
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+	{
+		public Indicators.SneakyAOBLE SneakyAOBLE()
+		{
+			return indicator.SneakyAOBLE(Input);
+		}
+
+		public Indicators.SneakyAOBLE SneakyAOBLE(ISeries<double> input )
+		{
+			return indicator.SneakyAOBLE(input);
+		}
+	}
+}
+
+#endregion

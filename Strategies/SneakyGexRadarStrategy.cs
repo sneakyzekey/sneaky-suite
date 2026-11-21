@@ -37,7 +37,6 @@ namespace NinjaTrader.NinjaScript.Strategies
     public enum GexProfileScopeS { Near, All }
     public enum PinSourceS { Auto, ProfileMagnet, CsvPinStrike, Manual }
     public enum WingPresetS { Min15, Std40, Wide70, Max95 }
-    public enum TradeSideS { Both, LongOnly, ShortOnly }
 
     public class SneakyGexRadarStrategy : Strategy
     {
@@ -58,13 +57,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private List<Mark> marks = new List<Mark>();
         private DateTime levelsStamp = DateTime.MinValue, lastCheck = DateTime.MinValue;
         private string levelsInfo = "levels: not loaded";
-        private string gexLevelsPathNote = "", gexProfilePathNote = "";
         private EMA emaTrend; private ATR atrI;
         private StreamWriter rec;
         private double netGex = 0; private bool netGexKnown = false; private Dictionary<int, int> lastGexBar = new Dictionary<int, int>();
         private int lastSignalBarLong = -1000, lastSignalBarShort = -1000, lastFvgBarLong = -1000, lastFvgBarShort = -1000;
-        // "Require break of signal bar" bookkeeping: a setup that's waiting for a later bar to break its own signal bar's high/low
-        private Setup pendingSetup; private int pendingDir, pendingSignalBar; private double pendingSignalHigh, pendingSignalLow;
 
         // ------------------------------------------------------------------ properties
         // ------------------------------------------------------------------ properties
@@ -218,16 +214,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Min score to trade", GroupName = "0 Trading", Order = 7, Description = "Applied on top of the setup's own score rules. 0 = trade every setup shown.")]
         [Range(0, 100)]
         public int MinTradeScore { get; set; }
-        [Display(Name = "Trade side", GroupName = "0 Trading", Order = 8, Description = "Both (default): take every qualifying setup, long or short. Long only / Short only: ignore setups in the other direction entirely (they're still drawn/scored, just never traded).")]
-        public TradeSideS TradeSide { get; set; }
-
-        [Display(Name = "Require break of signal bar", GroupName = "2b Entry filters", Order = 0, Description = "OFF (default): enter right on the setup's own signal bar, as before. ON: instead of entering immediately, hold the setup and wait - only enter once a LATER bar's high (for a long) / low (for a short) trades beyond the signal bar's own high/low, i.e. price actually follows through past where the setup printed. The setup is dropped (no trade) if the break hasn't happened within 'Max bars to resolve' bars (Plan group).")]
-        public bool RequireBreakOfSignalBar { get; set; }
-        [Display(Name = "Require N consecutive same-color bars", GroupName = "2b Entry filters", Order = 1, Description = "OFF (default): no bar-color requirement on the entry bar. ON: the bar an entry is about to trigger on, plus the N-1 bars immediately before it, must all be the same color as the trade direction - up-closed bars (Close > Open) for a long, down-closed bars (Close < Open) for a short (e.g. N=2 needs 'up bar after up bar' for a long). A doji (Close == Open) breaks the run and blocks that entry. Works standalone or combined with the break-of-signal-bar filter above (checked on whichever bar the entry would otherwise fire on).")]
-        public bool RequireConsecutiveBars { get; set; }
-        [Range(1, 20)]
-        [Display(Name = "Consecutive bars needed", GroupName = "2b Entry filters", Order = 2)]
-        public int ConsecutiveBarsCount { get; set; }
 
         // ------------------------------------------------------------------ 9 Panels & history
         [Display(Name = "Draw setups on history (no trading)", GroupName = "9 Panels & history", Order = 0, Description = "Scans old bars against TODAY's levels so zones, B/W/X/P/C/F marks and plan lines show on the existing chart. Draw-only: history bars are never traded. Look-ahead, for eyeballing only; results are not logged.")]
@@ -298,8 +284,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 BarsRequiredToTrade = 60;
                 IsInstantiatedOnEachOptimizationIteration = true;
 
-                Quantity = 1; TradeHistorical = false; MaxTradesPerDay = 0; DailyLossLimit = 0; MinTradeScore = 0; TradeSide = TradeSideS.Both;
-                RequireBreakOfSignalBar = false; RequireConsecutiveBars = false; ConsecutiveBarsCount = 2;
+                Quantity = 1; TradeHistorical = false; MaxTradesPerDay = 0; DailyLossLimit = 0; MinTradeScore = 0;
                 UseSession = false; SessionStart = 930; SessionEnd = 1600;
                 ScanHistory = true; ShowKinetic = true; ShowPinPayoff = true; ShowGexProfile = true; StripHeight = 230; HideStripsOnDrag = true; ShowPerf = true;
                 KinCorner = RadarStratCorner.TopRight; KinOffsetX = 70; KinOffsetY = 40; KinScale = 1.0;
@@ -349,50 +334,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
 
         // ------------------------------------------------------------------ levels
-        // Falls back to the literal %USERPROFILE%\Documents\NinjaTrader 8 folder when a GEX
-        // data file isn't where NinjaTrader's own Globals.UserDataDir points. fetch_gex_nq.py
-        // writes via Python's os.path.expanduser("~"), which does NOT follow a redirected
-        // Windows Documents folder (e.g. moved onto a D: drive) the way NinjaTrader's own
-        // Known-Folder-aware UserDataDir does -- so on a machine with Documents redirected,
-        // the two can point at different folders unless GEX_DATA_DIR is set to match. This
-        // keeps the chart working either way and reports which folder it actually used.
-        private string ResolveGexFile(string fileName, out string foundNote)
-        {
-            string primaryDir = NinjaTrader.Core.Globals.UserDataDir;
-            string primary = Path.Combine(primaryDir, fileName);
-            if (File.Exists(primary)) { foundNote = ""; return primary; }
-
-            string fallbackDir = null;
-            try
-            {
-                string up = Environment.GetEnvironmentVariable("USERPROFILE");
-                if (!string.IsNullOrEmpty(up)) fallbackDir = Path.Combine(up, "Documents", "NinjaTrader 8");
-            }
-            catch { }
-
-            if (!string.IsNullOrEmpty(fallbackDir) && !string.Equals(fallbackDir, primaryDir, StringComparison.OrdinalIgnoreCase))
-            {
-                string fb = Path.Combine(fallbackDir, fileName);
-                if (File.Exists(fb))
-                {
-                    foundNote = "using " + fileName + " from " + fallbackDir + " (not " + primaryDir + " -- set GEX_DATA_DIR to fix)";
-                    return fb;
-                }
-            }
-
-            foundNote = "";
-            return primary; // neither exists -- let the caller's own "not found" message report this path
-        }
-
         private string ResolvePath()
         {
             if (!string.IsNullOrEmpty(LevelsPath)) return LevelsPath;
             string root = Instrument.MasterInstrument.Name.ToUpperInvariant();
             string tk = (root == "ES" || root == "MES") ? "ES" : ((root == "YM" || root == "MYM") ? "YM" : "NQ");
-            string note;
-            string p = ResolveGexFile("GexLevels_" + tk + ".csv", out note);
-            gexLevelsPathNote = note;
-            return p;
+            return Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "GexLevels_" + tk + ".csv");
         }
 
         private void ReloadLevelsIfNeeded()
@@ -577,42 +524,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (setups.Count > 200) setups.RemoveRange(0, setups.Count - 200);
                 if (marks.Count > 400) marks.RemoveRange(0, marks.Count - 400);
             }
-            if (!canTrade) return;
+            if (best == null || !canTrade) return;
 
             // ---------------- entry
             if (inPos)
             {
-                if (best != null)
-                {
-                    bool opposite = (Position.MarketPosition == MarketPosition.Long && best.Dir < 0) || (Position.MarketPosition == MarketPosition.Short && best.Dir > 0);
-                    if (ExitOnOpposite && opposite) CloseAll("OppositeSetup");
-                }
-                pendingSetup = null;   // a position is open: any earlier pending breakout wait is moot
+                bool opposite = (Position.MarketPosition == MarketPosition.Long && best.Dir < 0) || (Position.MarketPosition == MarketPosition.Short && best.Dir > 0);
+                if (ExitOnOpposite && opposite) CloseAll("OppositeSetup");
                 return;   // one position at a time
             }
-
-            // "Require break of signal bar": a setup that's waiting for a LATER bar to break its own signal bar's high/low.
-            // Checked every bar it stays alive, even bars with no fresh setup of their own.
-            if (pendingSetup != null)
-            {
-                if (CurrentBar - pendingSignalBar > MaxAgeBars) pendingSetup = null;
-                else
-                {
-                    bool brokeOut = pendingDir > 0 ? High[0] > pendingSignalHigh : Low[0] < pendingSignalLow;
-                    if (brokeOut)
-                    {
-                        Setup toEnter = pendingSetup; int pDir = pendingDir;
-                        pendingSetup = null;   // one shot: this pending setup is resolved either way
-                        if (!RequireConsecutiveBars || ConsecutiveBarsOk(pDir)) PlaceEntry(toEnter, pDir, atr);
-                    }
-                }
-            }
-            if (Position.MarketPosition != MarketPosition.Flat || lastEntryBar == CurrentBar) return;   // the pending check above may have just filled this bar
-
-            if (best == null) return;
             int dir = best.Dir;
-            if (TradeSide == TradeSideS.LongOnly && dir < 0) return;
-            if (TradeSide == TradeSideS.ShortOnly && dir > 0) return;
             if (best.Score < MinTradeScore) return;
             if (MaxTradesPerDay > 0 && tradesToday >= MaxTradesPerDay) return;
             if (DailyLossLimit > 0 && TodayPnl() <= -DailyLossLimit) return;
@@ -623,33 +544,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (!inside) return;
             }
             if (lastEntryBar == CurrentBar) return;
-
-            if (RequireBreakOfSignalBar)
-            {
-                // hold the setup; only place the order once a later bar actually breaks this signal bar's high/low (see above)
-                pendingSetup = best; pendingDir = dir; pendingSignalHigh = High[0]; pendingSignalLow = Low[0]; pendingSignalBar = CurrentBar;
-                return;
-            }
-            if (RequireConsecutiveBars && !ConsecutiveBarsOk(dir)) return;
-            PlaceEntry(best, dir, atr);
-        }
-
-        // true when the current bar, plus the (ConsecutiveBarsCount - 1) bars immediately before it, are all the same
-        // color as the trade direction: Close > Open ("up bar") for a long, Close < Open ("down bar") for a short.
-        private bool ConsecutiveBarsOk(int dir)
-        {
-            int n = ConsecutiveBarsCount;
-            if (CurrentBar < n - 1) return false;
-            for (int i = 0; i < n; i++)
-            {
-                if (dir > 0) { if (!(Close[i] > Open[i])) return false; }
-                else { if (!(Close[i] < Open[i])) return false; }
-            }
-            return true;
-        }
-
-        private void PlaceEntry(Setup best, int dir, double atr)
-        {
             // a protective stop / target must sit on the correct side of the market or NinjaTrader rejects the order
             double edge = 2 * TickSize;
             if (dir > 0 && !(best.Stop < Close[0] - edge && best.Target > Close[0] + edge)) return;
@@ -2306,8 +2200,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                 if (act.Count == 0)
                 {
-                    string pathNote = gexLevelsPathNote.Length > 0 ? gexLevelsPathNote : gexProfilePathNote;
-                    Txt("Waiting for a sweep of a level.  " + levelsInfo + (pathNote.Length > 0 ? "  |  " + pathNote : ""), x2, y2, W - pad * 2, 10f * k, CGrey, false);
+                    Txt("Waiting for a sweep of a level.  " + levelsInfo, x2, y2, W - pad * 2, 10f * k, CGrey, false);
                     y2 += 20f * k;
                 }
                 else
@@ -3740,10 +3633,7 @@ private sealed class GexProfileModule : PanelBase
             if (!string.IsNullOrEmpty(ProfilePath)) return ProfilePath;
             string root = Instrument.MasterInstrument.Name.ToUpperInvariant();
             string tk = (root == "ES" || root == "MES") ? "ES" : ((root == "YM" || root == "MYM") ? "YM" : "NQ");
-            string note;
-            string p = ResolveGexFile("GexProfile_" + tk + ".csv", out note);
-            gexProfilePathNote = note;
-            return p;
+            return Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "GexProfile_" + tk + ".csv");
         }
 
         private void ReloadIfNeeded()
@@ -3754,7 +3644,7 @@ private sealed class GexProfileModule : PanelBase
             try
             {
                 string p = ResolvePath();
-                if (!File.Exists(p)) { lock (sync) info = "profile file not found - run the updated fetch_gex_nq.py" + (gexProfilePathNote.Length > 0 ? " (" + gexProfilePathNote + ")" : ""); return; }
+                if (!File.Exists(p)) { lock (sync) info = "profile file not found - run the updated fetch_gex_nq.py"; return; }
                 DateTime st = File.GetLastWriteTimeUtc(p);
                 if (st == stamp && rowsAll.Count > 0) return;
                 stamp = st;
