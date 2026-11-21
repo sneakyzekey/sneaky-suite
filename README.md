@@ -31,7 +31,8 @@ a NinjaTrader 8 chart.
 | **SneakyIctMarketStructure** (2nd view)<br>![SneakyIctMarketStructure 2](screenshots/SneakyIctMarketStructure_2.png) | **SneakyLiquiditySfpMss** (2nd view, GBPUSD)<br>![SneakyLiquiditySfpMss 2](screenshots/SneakyLiquiditySfpMss_2.png) |
 | **SneakyKineticPanel + GexRadar** (2nd view, scalper mode)<br>![Kinetic Panel + GexRadar 2](screenshots/SneakyKineticPanel_GexRadar_2.png) | **SneakyXLBreakoutScanner** — breakout/signal scanner panel<br>![SneakyXLBreakoutScanner](screenshots/SneakyXLBreakoutScanner.png) |
 | **SneakyIntermarket** — cross-symbol strength table<br>![SneakyIntermarket table](screenshots/SneakyIntermarket_table.png) | **SneakyLevelsPanel** — session/VWAP levels<br>![SneakyLevelsPanel](screenshots/SneakyLevelsPanel.png) |
-| **SneakyStrykSvp** — session volume profile, dashboard and trade-signal plots (port of "STRYK: SVP" by Es-Sniper)<br>![SneakyStrykSvp](screenshots/SneakyStrykSvp.png) | |
+| **SneakyStrykSvp** — session volume profile, dashboard and trade-signal plots (port of "STRYK: SVP" by Es-Sniper)<br>![SneakyStrykSvp](screenshots/SneakyStrykSvp.png) | **SneakySqueezeEngineProCc** — squeeze/momentum/trend panel (CandleChasers PRO engine)<br>![SneakySqueezeEngineProCc](screenshots/SneakySqueezeEngineProCc.png) |
+| **SneakyIctFxProIfvgSystem** — multi-timeframe IFVG/CISD bias dashboard<br>![SneakyIctFxProIfvgSystem](screenshots/SneakyIctFxProIfvgSystem.png) | **SneakyCRTLiquiditySweepStrategy** — Candle Range Theory liquidity sweep + reclaim strategy<br>![SneakyCRTLiquiditySweepStrategy](screenshots/SneakyCRTLiquiditySweepStrategy.png) |
 
 ### Original sources (open-source scripts ported to NT8 for the files above)
 
