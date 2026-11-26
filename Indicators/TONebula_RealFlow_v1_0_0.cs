@@ -112,7 +112,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 	public class TONebulaRealFlow : Indicator
 	{
 		#region Constants (from the Pine source)
-		private const int vSqueeze = 4, vTramp = 4, vBands = 2, vLuxRev = 3, vEarlyRev = 2, vDeadRev = 2, vShark = 2;
+		private const int vSqueeze = 4, vTramp = 4, vBands = 2, vLuxRev = 3, vEarlyRev = 2, vDeadRev = 2, vShark = 2, vOrderFlow = 3;
 		private const int UP = 1, DN = 2;                 // waveState values (0 = na)
 
 		private const int iColorSmooth = 3;
@@ -210,7 +210,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 			sUpperBB, sLowerBB, sUpperAtr, sLowerAtr, sRsiBasis, sUpperRsi, sLowerRsi, sRsiMa, sDhT, sDlT,
 			sUpClose, sDownClose, sUpperBBsq, sLowerBBsq, sFan, sMg, sCloudArgb, sMin50, sMax50;
 		private Series<bool> sDeadRev, sLuxRev, sTramp, sSqz, sEarlyRev, sShark, sBands, sTrampDn, sTrampUp,
-			sWeGoUp, sWeGoDown, sUpwards, sDownwards, sBrightGreen, sBrightRed, sPlotBuy, sPlotSell;
+			sWeGoUp, sWeGoDown, sUpwards, sDownwards, sBrightGreen, sBrightRed, sPlotBuy, sPlotSell, sOfRev;
 
 		// public outputs
 		private Series<double> oSignal, oAdd, oTP, oWave, oConf, oCloud, oFlowMode, oStrong, oCD;
@@ -228,6 +228,13 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 		private int lastPlBar = -1, lastPhBar = -1;
 		private double prevPlRsi = double.NaN, prevPlLow = double.NaN, prevPhRsi = double.NaN, prevPhHigh = double.NaN;
 		private int prevPlBar = -1, prevPhBar = -1;
+		// order flow markers (Absorption / Trap / Delta-Divergence) -- separate from the smoothed 'cvd' used
+		// for candle coloring. cumDeltaHist is cumulative RAW delta as-of each bar's close, indexed by
+		// absolute bar number, so pivot bars (which carry a confirmation lag) can look back and compare.
+		private double cumDeltaRaw;
+		private readonly List<double> cumDeltaHist = new List<double>();
+		private PEma volAvgEma;
+		private int lastAbsorbBar = -1000, lastTrapBar = -1000, lastDeltaDivBar = -1000;
 		private int waveState;
 		private double hemaP = double.NaN, bHP = double.NaN;
 		private double haOpenP = double.NaN, haCloseP = double.NaN;
@@ -253,6 +260,10 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 		// dashboard snapshot
 		private bool dFanUp; private double dAdx = double.NaN, dRsi = double.NaN, dDiP, dDiM; private int dConf;
 		private bool dFlowLive;
+		// temporary order-flow diagnostic for the dashboard -- how close the current bar actually is to
+		// crossing the Absorption/Trap/Delta-Divergence delta threshold, so it's visible in real time
+		// instead of only after (if) one fires. Safe to remove once this has been confirmed working live.
+		private double dOfDelta, dOfThresh, dOfBody, dOfAtr;
 		private string lvlUpTxt = "—", lvlDnTxt = "—";
 
 		// rendering
@@ -297,6 +308,10 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 				ShowDashboard = true;
 				ShowSqueezeZones = true;
 				ShowDivergences = true;
+				ShowUltimateMarker = true;
+				ShowOrderFlowMarkers = true;
+				OrderFlowDeltaMultiple = 0.3;
+				OrderFlowVolumeAvgPeriod = 20;
 				ShowSessionLevels = true;
 				ShowHema = false;
 				ShowPlus = false;
@@ -399,7 +414,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 				sMg = new Series<double>(this, MaximumBarsLookBack.Infinite);
 				sCloudArgb = new Series<double>(this, MaximumBarsLookBack.Infinite);
 
-				sDeadRev = B(); sLuxRev = B(); sTramp = B(); sSqz = B(); sEarlyRev = B(); sShark = B(); sBands = B();
+				sDeadRev = B(); sLuxRev = B(); sTramp = B(); sSqz = B(); sEarlyRev = B(); sShark = B(); sBands = B(); sOfRev = B();
 				sTrampDn = B(); sTrampUp = B(); sWeGoUp = B(); sWeGoDown = B(); sUpwards = B(); sDownwards = B();
 				sBrightGreen = B(); sBrightRed = B(); sPlotBuy = B(); sPlotSell = B();
 
@@ -444,6 +459,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 		private void InitState()
 		{
 			e9 = new PEma(9); e21 = new PEma(21); cvdBuy = new PEma(14); cvdSell = new PEma(14);
+			volAvgEma = new PEma(OrderFlowVolumeAvgPeriod);
 			trRmaDi = new PEma(dilen, true); pRma = new PEma(dilen, true); mRma = new PEma(dilen, true); adxRma = new PEma(adxlen, true);
 			rsiUpM = new PEma(rsiLengthInput, true); rsiDnM = new PEma(rsiLengthInput, true);
 			rsiUpU = new PEma(rsiLength, true); rsiDnU = new PEma(rsiLength, true);
@@ -471,6 +487,8 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 			}
 			markers.Clear(); imbLines.Clear(); divLines.Clear(); sqzZones.Clear(); orSizes.Clear();
 			curZone = null; prevSqzOn = false;
+			cumDeltaRaw = 0; cumDeltaHist.Clear();
+			lastAbsorbBar = lastTrapBar = lastDeltaDivBar = -1000;
 		}
 		// Theme colors are resolved from the live property values, re-checked on every bar and every render,
 		// so the palette always follows whatever ColorTheme / CloudPalette the running instance actually holds.
@@ -627,6 +645,14 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 			Values[9][0] = oFlowMode[0];
 			Color cCVD = cvd > 0 ? Grad(Math.Abs(cvd), 0, iVolDeltaTop, T(colorBigGreen, 70), colorBigGreen)
 				: cvd < 0 ? Grad(Math.Abs(cvd), 0, iVolDeltaTop, T(colorBigRed, 70), colorBigRed) : Colors.White;
+
+			// ---------- order flow: raw per-bar delta + cumulative-since-load history, feeds the Absorption /
+			// Trap / Delta-Divergence markers below. Kept separate from the smoothed 'cvd' above (which only
+			// drives candle coloring) because a threshold test needs this bar's actual delta, not an EMA of it.
+			double barDeltaRaw = buyingVol - sellingVol;
+			cumDeltaRaw += barDeltaRaw;
+			cumDeltaHist.Add(cumDeltaRaw);
+			double ofAvgVol = volAvgEma.Next(v);
 
 			// ---------- engulfing reversal at 50-bar extreme (deadRev) ----------
 			sMin50[0] = Lowest(Low, 50);
@@ -924,6 +950,84 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 			bool bullDiv = ShowDivergences && plFound && plInRange && rsiPiv > prevPlRsi && lowPiv < prevPlLow;
 			bool bearDiv = ShowDivergences && phFound && phInRange && rsiPiv < prevPhRsi && highPiv > prevPhHigh;
 			Values[7][0] = bullDiv ? 1 : bearDiv ? -1 : 0;
+
+			// ---------- order flow: Absorption / Trap / Delta-Divergence (live ticks only -- mirrors
+			// SneakyMarketAdvisor's approach, adapted to this file's own volume-delta and pivot/swing tracking).
+			// Freshness conditions below (highPiv > prevPhHigh / lowPiv < prevPlLow) reuse the exact same
+			// swing-extreme tests bullDiv/bearDiv use, just without the RSI part, so these can fire on their
+			// own, alongside an RSI divergence at the same pivot, or neither.
+			// The detection itself (and its contribution to the take-profit confluence score below) runs
+			// regardless of ShowOrderFlowMarkers -- that toggle only controls whether a marker gets drawn,
+			// same split as every other confluence input in this file (none of which are display-gated).
+			bool ofRev = false;
+			if (flowIsLive && ofAvgVol > 0)
+			{
+				double ofDeltaThresh = ofAvgVol * OrderFlowDeltaMultiple;
+				if (ofDeltaThresh > 0)
+				{
+					double ofBody = Math.Abs(c - o);
+					bool ofAbsorbFires = atrValue > 0 && Math.Abs(barDeltaRaw) >= ofDeltaThresh && ofBody <= 0.3 * atrValue && cb - lastAbsorbBar > 5;
+					if (ofAbsorbFires)
+					{
+						lastAbsorbBar = cb;
+						ofRev = true;
+						if (ShowOrderFlowMarkers)
+							AddMarker(cb, barDeltaRaw > 0, "ABS", barDeltaRaw > 0 ? colorBigGreen : colorBigRed, 10, MKind.Box,
+								"ABSORPTION\nBig net " + (barDeltaRaw > 0 ? "buying" : "selling") + " (delta " + FmtOf(barDeltaRaw) +
+								") but price barely moved -- may be getting absorbed at this level.");
+					}
+
+					if (pivBar >= 0 && pivBar < cumDeltaHist.Count)
+					{
+						double pivBarDelta = pivBar > 0 ? cumDeltaHist[pivBar] - cumDeltaHist[pivBar - 1] : cumDeltaHist[pivBar];
+
+						if (phFound && phInRange && highPiv > prevPhHigh)
+						{
+							bool bullTrapFires = pivBarDelta <= -ofDeltaThresh && cb - lastTrapBar > 5;
+							bool bearDDivFires = !bullTrapFires && prevPhBar >= 0 && prevPhBar < cumDeltaHist.Count && cumDeltaHist[pivBar] < cumDeltaHist[prevPhBar] && cb - lastDeltaDivBar > 5;
+							if (bullTrapFires)
+							{
+								lastTrapBar = cb;
+								ofRev = true;
+								if (ShowOrderFlowMarkers)
+									AddMarker(pivBar, false, "TRAP", colorBigRed, 10, MKind.Box,
+										"POSSIBLE BULL TRAP\nFresh swing high made on net selling (delta " + FmtOf(pivBarDelta) + "). Buyers chasing this high may be trapped.");
+							}
+							else if (bearDDivFires)
+							{
+								lastDeltaDivBar = cb;
+								ofRev = true;
+								if (ShowOrderFlowMarkers)
+									AddMarker(pivBar, false, "DDIV", colorBigRed, 10, MKind.Box,
+										"BEARISH DELTA DIVERGENCE\nPrice made a higher high but cumulative delta made a lower high -- real buying pressure isn't confirming the move.");
+							}
+						}
+						if (plFound && plInRange && lowPiv < prevPlLow)
+						{
+							bool bearTrapFires = pivBarDelta >= ofDeltaThresh && cb - lastTrapBar > 5;
+							bool bullDDivFires = !bearTrapFires && prevPlBar >= 0 && prevPlBar < cumDeltaHist.Count && cumDeltaHist[pivBar] > cumDeltaHist[prevPlBar] && cb - lastDeltaDivBar > 5;
+							if (bearTrapFires)
+							{
+								lastTrapBar = cb;
+								ofRev = true;
+								if (ShowOrderFlowMarkers)
+									AddMarker(pivBar, true, "TRAP", colorBigGreen, 10, MKind.Box,
+										"POSSIBLE BEAR TRAP\nFresh swing low made on net buying (delta " + FmtOf(pivBarDelta) + "). Sellers chasing this low may be trapped.");
+							}
+							else if (bullDDivFires)
+							{
+								lastDeltaDivBar = cb;
+								ofRev = true;
+								if (ShowOrderFlowMarkers)
+									AddMarker(pivBar, true, "DDIV", colorBigGreen, 10, MKind.Box,
+										"BULLISH DELTA DIVERGENCE\nPrice made a lower low but cumulative delta made a higher low -- real selling pressure isn't confirming the move.");
+							}
+						}
+					}
+				}
+			}
+			sOfRev[0] = ofRev;
+
 			double divPrevPlRsi = prevPlRsi, divPrevPhRsi = prevPhRsi;
 			Color divBull = T(colorBigGreen, DivTransparency), divBear = T(colorBigRed, DivTransparency);
 			if (DrawDivLines)
@@ -940,7 +1044,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 			{
 				iTP = (deadRev || sDeadRev[1] ? vDeadRev : 0) + (luxRev || sLuxRev[1] ? vLuxRev : 0) + (tramp || sTramp[1] ? vTramp : 0)
 					+ (sqz || sSqz[1] ? vSqueeze : 0) + (earlyRev || sEarlyRev[1] ? vEarlyRev : 0) + (shark || sShark[1] ? vShark : 0)
-					+ (bands || sBands[1] ? vBands : 0);
+					+ (bands || sBands[1] ? vBands : 0) + (ofRev || sOfRev[1] ? vOrderFlow : 0);
 			}
 
 			// ---------- Tidal Wave ----------
@@ -1089,6 +1193,8 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 			if (ShowPlus && plusSell) AddMarker(cb, false, "+", colorBigRed, 13, MKind.Glyph, "ADD SHORT\nVolume imbalance: opened below the prior red close during a down-wave" + ctx);
 			if (ShowBigPlus && vodkaBuy) AddMarker(cb, true, "✚", colorBigGreen, 13, MKind.Glyph, "ADD LONG (STRONG)\nVodka Shot: rising triple WMA, bullish energy ratio, volume spike, up-wave" + ctx);
 			if (ShowBigPlus && vodkaSell) AddMarker(cb, false, "✚", colorBigRed, 13, MKind.Glyph, "ADD SHORT (STRONG)\nVodka Shot: falling triple WMA, bearish energy ratio, volume spike, down-wave" + ctx);
+			if (ShowUltimateMarker && plotBuy) AddMarker(cb, true, "U", colorBigGreen, 11, MKind.Glyph, "ULTIMATE BUY\nRSI/price reversal cross confirmed out of the oversold zone" + ctx);
+			if (ShowUltimateMarker && plotSell) AddMarker(cb, false, "U", colorBigRed, 11, MKind.Glyph, "ULTIMATE SELL\nRSI/price reversal cross confirmed out of the overbought zone" + ctx);
 
 			bool sTpAll = tpAll && waveState != 0;
 			bool sTpSome = tpSome && !tpAll && waveState != 0;
@@ -1102,6 +1208,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 				if (earlyRev || sEarlyRev[1]) why.Add("Early reversal (fractal break on a vector bar)");
 				if (shark || sShark[1]) why.Add("Shark (RSI outside its bands)");
 				if (bands || sBands[1]) why.Add("Bollinger wick rejection");
+				if (ofRev || sOfRev[1]) why.Add("Order flow reversal (Absorption/Trap/Delta-Divergence)");
 				string title = sTpAll ? "TAKE PROFIT ✔ (all)" : "TAKE PROFIT ✓ (partial)";
 				AddMarker(cb, waveState == DN, sTpAll ? "✔" : "✓", sTpAll ? cRed_ : cPurple, 19, MKind.Glyph,
 					title + "\nReversal signals:\n• " + string.Join("\n• ", why) + ctx);
@@ -1161,6 +1268,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 			Values[6][0] = oCloud[0];
 			Values[10][0] = oStrong[0];
 			dFanUp = fanUp; dAdx = adxVal; dRsi = rsiM; dDiP = diPlus; dDiM = diMinus; dConf = iTP; dFlowLive = flowIsLive;
+			dOfDelta = barDeltaRaw; dOfThresh = ofAvgVol * OrderFlowDeltaMultiple; dOfBody = Math.Abs(c - o); dOfAtr = atrValue;
 
 			// ---------- alert ----------
 			if (EnableAlerts && State == State.Realtime)
@@ -1412,6 +1520,7 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 		private bool InRange(int bars) { return DivRangeMin <= bars && bars <= DivRangeMax; }
 
 		private static string F0(double x) { return double.IsNaN(x) ? "–" : Math.Round(x).ToString("0", CultureInfo.InvariantCulture); }
+		private static string FmtOf(double d) { return (d > 0 ? "+" : "") + Math.Round(d).ToString("#,0", CultureInfo.InvariantCulture); }
 		#endregion
 
 		#region Color helpers
@@ -1975,6 +2084,18 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 					? "This bar's CVD/volume-delta came from real live tick classification (Lee & Ready quote-rule + tick-rule)."
 					: "This bar's CVD/volume-delta is the bar-geometry estimate -- no live ticks classified for it yet (historical bar, or market data hasn't started flowing). Needs a live/replay session with ticks reaching OnMarketData." });
 
+			// TEMP DIAGNOSTIC -- shows how close the current bar's delta actually is to the Absorption/
+			// Trap/Delta-Divergence threshold, so it's visible in real time instead of only after one fires.
+			// Safe to remove (and remove the dOf* fields / this snapshot line above) once confirmed working.
+			{
+				double ofRatio = dOfThresh > 0 ? Math.Abs(dOfDelta) / dOfThresh : 0;
+				Color ofCol = ofRatio >= 1 ? (dOfDelta > 0 ? colorBigGreen : colorBigRed) : ofRatio >= 0.7 ? cOrange : fg;
+				rows.Add(new DashRow { Key = "OF Watch", Val = FmtOf(dOfDelta) + " / " + F0(dOfThresh) + "  (" + F0(ofRatio * 100) + "%)", ValCol = ofCol,
+					Tip = "TEMP DIAGNOSTIC -- how close this bar's delta is to the Absorption/Trap/Delta-Divergence threshold.\n"
+						+ "Delta " + FmtOf(dOfDelta) + " vs threshold " + F0(dOfThresh) + " (" + F0(ofRatio * 100) + "% of the way there).\n"
+						+ "Body " + F0(dOfBody) + " vs ATR x0.3 cap " + F0(0.3 * dOfAtr) + " -- Absorption also needs the body under this." });
+			}
+
 			if (DashShowLevels && ShowSessionLevels)
 			{
 				rows.Add(new DashRow { Key = "SESSION LEVELS", Val = "", Head = true });
@@ -2259,6 +2380,21 @@ namespace NinjaTrader.NinjaScript.Indicators.TraderOracle
 
 		[Display(Name = "Imbalance line style", Order = 3, GroupName = "06. Tidal Wave")]
 		public TONebulaRealFlowLineStyle ImbalanceStyle { get; set; }
+
+		[Display(Name = "Show Ultimate Buy/Sell marker", Order = 4, GroupName = "06. Tidal Wave")]
+		public bool ShowUltimateMarker { get; set; }
+
+		// ---- 12. Order Flow ----
+		[Display(Name = "Show order flow markers (Absorption / Trap / Delta-Divergence)", Order = 1, GroupName = "12. Order Flow")]
+		public bool ShowOrderFlowMarkers { get; set; }
+
+		[Range(0.05, 5.0)]
+		[Display(Name = "Delta threshold (x average volume)", Order = 2, GroupName = "12. Order Flow")]
+		public double OrderFlowDeltaMultiple { get; set; }
+
+		[Range(1, int.MaxValue)]
+		[Display(Name = "Average volume lookback", Order = 3, GroupName = "12. Order Flow")]
+		public int OrderFlowVolumeAvgPeriod { get; set; }
 
 		// ---- 07. Advanced ----
 		[NinjaScriptProperty]
