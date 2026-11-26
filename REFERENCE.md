@@ -1,10 +1,10 @@
 # Sneaky Suite — Full Reference
 
-Full description and entry/signal/trigger logic for every file in this repo (169 total: 127 Indicators, 21 Strategies, 21 AddOns), organized by folder and sorted alphabetically within each. This supplements the short-form tables in the main [README](README.md).
+Full description and entry/signal/trigger logic for every file in this repo (173 total: 130 Indicators, 21 Strategies, 22 AddOns), organized by folder and sorted alphabetically within each. This supplements the short-form tables in the main [README](README.md).
 
 ---
 
-## Indicators (127)
+## Indicators (130)
 
 ## GexContextScore.cs
 **Description:** Reads a CSV from the companion `fetch_gex_nq.py` script and converts GEX wall position, gamma flip, gamma zone, DEX magnets, skew/term structure and 0DTE pin into a single directional context score from -100 to +100, with VIX-based blocking/attenuating filters.
@@ -53,6 +53,14 @@ Full description and entry/signal/trigger logic for every file in this repo (169
 ## SneakyAlphaForgeFlow.cs
 **Description:** Port of TradingView's "Alpha Forge | Flow BUY SELL" (AF AURORA): an OHLCV flow-persistence signal that smooths a buy/sell pressure score and combines it with a trend EMA and range filter, with an optional mirrored short/cover side, aurora trend line, badges and dashboard.
 **Signal logic:** BUY fires when the smoothed OHLCV pressure score is positive AND price is above the trend EMA AND the range filter is OK; the long position is exited (SELL) after N consecutive closes below the trend EMA. When the mirrored short side is enabled, SHORT fires on the inverse conditions (negative flow, price below trend EMA, falling broader trend) and COVER fires after N closes back above the trend EMA. Outputs a Signal plot of +1 (long entry) / -1 (short entry) / 0.
+
+## SneakyAlphaPulse_v1_0_0.cs
+**Description:** Original recreation of the marketed VISUAL STYLE of Quaderr's closed-source "AlphaPulse" (a MoneyFlow trend line, background tint, momentum orbs, wall/coil boxes, signal pills, status bar + legend) — not a decompile/clone of its undisclosed algorithm. Every calculation is this project's own public-formula implementation of the general concept each marketed feature describes.
+**Signal logic:** The MoneyFlow line is a SuperTrend-style ATR trailing stop (bull when price holds above it, bear below), thickening for a few bars on a flip. Optional "signal pills" — SWP (sweep) / BNC (bounce) / BRK (breakout) / TRP (trap) / REV (reversal) — print on a bar that meets each pattern's heuristic condition, subject to a cooldown. These are visual classifications, not a single clean +1/-1 Signal series, and the thresholds are original and will differ from the real product.
+
+## SneakyAtmLink_v1_0_0.cs
+**Description:** A tiny, settings-free "sensor" indicator with no plots and no UI. Drop it on whichever chart you want the SneakyATM AddOn to watch; it publishes that chart's instrument, ATR(14) (plus a real 1-minute ATR), the direction of the last several closed candles, a rolling volume-spike ratio, range-compression and hand-rolled Parabolic-SAR state, and the prior completed session's High/Low/Close into a static registry (`SneakyAtmLinkRegistry`).
+**Signal logic:** No signal and no plots — a one-way data bridge that exists only because NinjaTrader AddOns can't read an arbitrary chart's bar data directly. It feeds everything SneakyATM's OBSERVATIONS advisor rules need, and draws SneakyATM's preview bracket lines back onto the chart.
 
 ## SneakyBarDump_v1_0_0.cs
 **Description:** Headless utility that writes every completed bar (time, OHLC, volume) to a JSONL file, used as an "answer key" reference dataset for other recorder/backtest tooling.
@@ -294,6 +302,10 @@ Full description and entry/signal/trigger logic for every file in this repo (169
 ## SneakyLocation_v1_0_0.cs
 **Description:** Clean-room publisher of classic structural reference levels — session VWAP (with volume-weighted std-dev bands), prior-day high/low, opening range, initial balance, and the current session's high/low — plus a "nearest level" summary with signed distance in ticks and ATR.
 **Signal logic:** No discrete signal — it publishes a VwapSide (price above/below VWAP) and a "nearest reference level" context for other tools (e.g. SneakyGodReversal) to consult; not a standalone buy/sell trigger.
+
+## SneakyMarketAdvisor_v1_0_0.cs
+**Description:** A live, plain-English "market advisor" panel that calls out what it sees as bars close: candlestick patterns, swing-based market structure (trend / break of structure / change of character), nearby support & resistance, and classic chart patterns (double top/bottom, head & shoulders, triangle/wedge, flag/pennant, cup & handle). Standalone (no SneakySuite/SneakySkin dependency), hardcoded dark theme; also plots VWAP with two deviation bands.
+**Signal logic:** No single buy/sell Signal series — it emits a running text feed of observations as each bar closes. The classic chart-pattern call-outs are geometric, tolerance-based heuristics over detected swing points (each tagged "(heuristic)" in the feed, with expected false positives and late calls, cup & handle the fuzziest); candlestick and structure read-outs are rule-based on completed bars, and optional volume and live-delta order-flow checks add further notes when enabled.
 
 ## SneakyMovingMedian_v1_0_0.cs
 **Description:** Clean-room rolling median (outlier-robust central-tendency line) over the last N inputs, with a Sneaky glass card. A smoother-library building block, not a Council voter.
@@ -632,8 +644,12 @@ Backtest of these exact rules on exported NQ 1-minute data (88 trading days, 11 
 
 ---
 
-## AddOns (21)
+## AddOns (22)
 
+
+## SneakyATM_v1_0_0.cs
+**Description:** Daily goal/risk tiered one-click sizing + consecutive-candle pullback advisor, added via Control Center ▸ New. Recreated from marketing/demo material for the closed-source "Maverick ATM" — an original implementation of the described behavior under its own branding, not a port. You set a daily profit-lock goal, a daily loss limit, and a per-trade risk cap for one account; PREVIEW LONG/SHORT shows four tiered one-click sizes (Quick / Medium / Large / Home Run), with a tighter scalp stop on Quick and a shared wider ATR stop with escalating 1R / 1.5R / 2R targets on the rest.
+**Signal logic:** Not a chart signal generator — an order-entry/advisor AddOn. Quantity is sized to fit the per-trade risk cap and then hard-capped again against whatever is left of today's loss limit (quantity is clamped, never the stop). An OBSERVATIONS panel, fed by the `SneakyAtmLink` indicator, raises blocking and informational notes — pullback run, volume spike, distance to a prior session level, tight-range compression, SAR-flip chop, candle burst, account switch, and upcoming/just-passed USD economic-news events — before you commit a one-click entry.
 
 ## SneakyAlertService_v1_0_0.cs
 **Description:** A headless, always-on AddOnBase singleton that subscribes to `SneakyCore.Alerts.Raised` and turns each suite alert into something noticeable away from the chart — sound (a `.wav` via SoundPlayer, or a System sound fallback) and/or an optional push notification via a user-configured shell command (e.g. curl to Pushover/ntfy/Slack). It has no WPF panel of its own; the dashboard's Test tab provides a live config API (`GetConfig`/`Apply`/`Reload`) to edit `Alerts.conf` without restarting NT. Configurable settings (in `Sentinel\Alerts.conf`): `enabled`, `playInfo` (play a sound on Info-level alerts too), `throttleSec` (min seconds between same-level sounds), `critWav`/`infoWav` (custom sound paths), `pushCommand`/`pushOnInfo`.

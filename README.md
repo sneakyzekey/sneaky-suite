@@ -48,9 +48,9 @@ These are the original charts of the open-source indicators that several Sneaky 
 
 ## Contents
 
-- **`Indicators/`** — 127 chart indicators
+- **`Indicators/`** — 130 chart indicators
 - **`Strategies/`** — 21 automated strategies
-- **`AddOns/`** — 21 NinjaTrader AddOn services (risk/logging/alerts/dashboard/HUD infrastructure)
+- **`AddOns/`** — 22 NinjaTrader AddOn services (risk/logging/alerts/dashboard/HUD infrastructure)
 - **`GradingToolkit/`** — Python scripts for grading/validating Council &
   Confluence against recorded data
 
@@ -79,6 +79,7 @@ Instance Tags, and the Python toolkit)? See
 | `TONebula.cs`, `TONebula_RealFlow_v1_0_0.cs` | Nebula flow indicators |
 | `TurtleTrendBreakoutSignal_v1_0_0.cs` | Turtle-style breakout signal |
 | `PraedoxFibEngine_v0_1_0.cs`, `PraedoxSignalEngine_v0_1_0.cs`, `PraedoxVolatilityShield_v0_1_0.cs` | Praedox family indicators |
+| `SneakyAlphaPulse_v1_0_0.cs`, `SneakyMarketAdvisor_v1_0_0.cs`, `SneakyAtmLink_v1_0_0.cs` | AlphaPulse-style money-flow/trend visual; live plain-English market-advisor panel; and the settings-free on-chart sensor that feeds the SneakyATM AddOn |
 | Remaining `Sneaky*.cs` files | Supporting signals, oscillators, panels, recorders, and chart utilities — see each file's in-code `Description` attribute for details |
 
 ### Strategies
@@ -86,7 +87,7 @@ Instance Tags, and the Python toolkit)? See
 | File | Notes |
 |---|---|
 | `SneakyGexRadarStrategy.cs` | GEX-radar-driven automated strategy |
-| `SneakyFtkaTrendFollower.cs` | Trend-following strategy |
+| `SneakyFtkaTrendFollower.cs` | Trend-following strategy (reversal / ATF colour-flip / SMA-pullback entries, TP1 + runner) with full on-chart visuals and a session P&L panel |
 | `SneakyRegimeSwitch_v1_0_0.cs` | Regime-aware strategy switcher |
 | `SneakyTrendStrategy_v1_0_0.cs` | Core trend strategy |
 | `SneakyBridge_v0_2_0.cs` | Bridge/integration strategy |
@@ -103,6 +104,7 @@ Instance Tags, and the Python toolkit)? See
 | File | Notes |
 |---|---|
 | `SneakyCore_v1_0_0.cs`, `SneakyCore.Foundation.cs`, `SneakyCore.Safety.cs`, `SneakyCore.SystemBuilder.cs` | Shared core service framework |
+| `SneakyATM_v1_0_0.cs` | Daily goal/risk tiered one-click sizing + consecutive-candle pullback advisor (Control Center ▸ New); pairs with the `SneakyAtmLink` indicator |
 | `SneakyRiskService_v1_0_0.cs`, `SneakyEquityGate_v1_0_0.cs` | Risk management services |
 | `SneakyAlertService_v1_0_0.cs`, `SneakyNewsService_v1_0_0.cs` | Alerts / news services |
 | `SneakyLogService_v1_0_0.cs`, `SneakyLogEngine_v1_0_0.cs`, `SneakyStateService_v1_0_0.cs` | Logging / state tracking services |
